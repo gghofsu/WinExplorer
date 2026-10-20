@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.10.35013.160
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WinExplorer", "src\WinExplorer\WinExplorer.csproj", "{8318299E-8FD5-4368-8407-B0434E4150C1}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WinExplorer.Tests", "tests\WinExplorer.Tests\WinExplorer.Tests.csproj", "{297215A4-B0C4-467F-AB0D-3B0C92C0E6FE}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8318299E-8FD5-4368-8407-B0434E4150C1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8318299E-8FD5-4368-8407-B0434E4150C1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8318299E-8FD5-4368-8407-B0434E4150C1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8318299E-8FD5-4368-8407-B0434E4150C1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{297215A4-B0C4-467F-AB0D-3B0C92C0E6FE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{297215A4-B0C4-467F-AB0D-3B0C92C0E6FE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{297215A4-B0C4-467F-AB0D-3B0C92C0E6FE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{297215A4-B0C4-467F-AB0D-3B0C92C0E6FE}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {4646F804-CCB7-434D-B249-84045DE97EF7}
+	EndGlobalSection
+EndGlobal

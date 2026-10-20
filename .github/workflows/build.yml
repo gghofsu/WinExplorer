@@ -1,0 +1,83 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore WinExplorer.sln
+
+      - name: Build
+        run: dotnet build WinExplorer.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test WinExplorer.sln -c Release --no-build --logger "console;verbosity=normal"
+
+      - name: Publish (framework-dependent)
+        run: >
+          dotnet publish src/WinExplorer/WinExplorer.csproj -c Release -r win-x64
+          --self-contained false -p:PublishSingleFile=true
+          -o publish/framework-dependent
+
+      - name: Publish (self-contained)
+        run: >
+          dotnet publish src/WinExplorer/WinExplorer.csproj -c Release -r win-x64
+          --self-contained true -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o publish/self-contained
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = (Get-Content src/WinExplorer/WinExplorer.csproj |
+            Select-String -Pattern '<Version>(.*)</Version>').Matches[0].Groups[1].Value
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Compress-Archive -Path 'publish/framework-dependent/*' -DestinationPath "artifacts/WinExplorer-$version-win-x64.zip"
+          Compress-Archive -Path 'publish/self-contained/*' -DestinationPath "artifacts/WinExplorer-$version-win-x64-selfcontained.zip"
+
+      - name: Install Inno Setup
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = (Get-Content src/WinExplorer/WinExplorer.csproj |
+            Select-String -Pattern '<Version>(.*)</Version>').Matches[0].Groups[1].Value
+          ./scripts/make-installer.ps1 -OutputDirectory publish -Iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          Copy-Item "installer/Output/WinExplorer-$version-setup.exe" artifacts/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinExplorer
+          path: |
+            artifacts/*.zip
+            artifacts/*.exe
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.zip
+            artifacts/*.exe
