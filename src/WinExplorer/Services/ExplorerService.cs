@@ -242,6 +242,12 @@ internal sealed class ExplorerService : IDisposable
         if (newWindow == 0 || !NativeMethods.IsWindow(newWindow))
             return false;
 
+        if (_tabs.TabsUnsupported)
+        {
+            _log.Debug("Merge skipped: this build of Windows does not support tabs.");
+            return false;
+        }
+
         if (_tabs.IsSelfCreatedWindow(newWindow))
             return false;
 

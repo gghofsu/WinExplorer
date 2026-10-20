@@ -17,6 +17,7 @@ dotnet test WinExplorer.sln -c Release
 | Command line parsing (context menu verbs, switches, errors) | `CommandLineTests` |
 | Closed-tab history (order, capacity, de-duplication) | `TabHistoryTests` |
 | Settings round-trip, corrupt files, sanitising | `SettingsStoreTests` |
+| Folder name → path resolution (incl. `..` escapes, files, virtual folders) | `FolderResolutionTests` |
 
 ## Manual checklist (Windows 11 22H2+)
 
@@ -78,6 +79,26 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
       `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` contains/does not contain
       `WinExplorer`.
 - [ ] `WinExplorer.exe --exit` stops the tray icon.
+
+### Packaging
+
+- [ ] `scripts\build.ps1` builds the solution and runs the tests without warnings that
+      matter (`unused variable`-class noise is acceptable, `CS` errors are not).
+- [ ] `scripts\publish.ps1` produces `artifacts\WinExplorer-<version>-win-x64.zip`, and the
+      unzipped `WinExplorer.exe` starts on a machine without the .NET runtime when built with
+      `-SelfContained`.
+- [ ] `scripts\install.ps1` copies the app to
+      `%LOCALAPPDATA%\Programs\WinExplorer`, adds the context menu and the Run entry, and
+      starts the helper.
+- [ ] `scripts\make-installer.ps1` (or `ISCC.exe installer\WinExplorer.iss`) produces
+      `installer\Output\WinExplorer-<version>-setup.exe`.
+- [ ] Install from the setup with both integration tasks ticked → context menu and startup
+      entry exist; the app starts.
+- [ ] Uninstall from *Apps & features* → both integration tasks are undone, the previous
+      folder handler is back (double-clicking a folder opens a normal window) and
+      `%LOCALAPPDATA%\Programs\WinExplorer` is gone.
+- [ ] Install over an existing user install (no reboot, helper running) → the installer asks
+      Explorer to close the app, updates the files and leaves `%APPDATA%\WinExplorer` alone.
 - [ ] Start WinExplorer a second time → the settings window of the running instance appears
       (no second tray icon).
 - [ ] Restart Explorer (`explorer.exe` kill) → WinExplorer keeps running and tabs work again

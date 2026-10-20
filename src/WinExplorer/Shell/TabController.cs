@@ -34,6 +34,12 @@ internal sealed class TabController : IDisposable
     /// <summary>Raised with a human readable message for the UI/tray.</summary>
     public event EventHandler<string>? Activity;
 
+    /// <summary>
+    /// True once Explorer refused to create a tab: tabs need Windows 11 22H2+, so on older
+    /// builds the caller should stop trying (and stop hiding windows).
+    /// </summary>
+    public bool TabsUnsupported => _tabsUnsupportedLogged;
+
     /// <summary>Windows WinExplorer opened itself; the window merger must ignore them.</summary>
     public bool IsSelfCreatedWindow(nint hwnd)
     {
