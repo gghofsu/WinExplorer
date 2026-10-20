@@ -30,19 +30,27 @@ $target = if ($SelfContained) { 'self-contained' } else { 'framework-dependent' 
 $publishDir = Join-Path $OutputDirectory $target
 
 Write-Host "Publishing $version ($target)" -ForegroundColor Cyan
+$selfContainedArg = $SelfContained.IsPresent.ToString().ToLowerInvariant()
+
 dotnet publish $project -c Release -r win-x64 `
-    --self-contained $SelfContained.IsPresent `
+    --self-contained $selfContainedArg `
     -p:PublishSingleFile=true `
     -p:IncludeNativeLibrariesForSelfExtract=true `
     -o $publishDir
 
 if (-not $Iscc) {
     $candidates = @(
-        (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
-        (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+        "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
     ) | Where-Object { $_ -and (Test-Path $_) }
 
-    $Iscc = if ($candidates) { $candidates[0] } else { (Get-Command iscc -ErrorAction SilentlyContinue)?.Source }
+    if ($candidates) {
+        $Iscc = $candidates[0]
+    }
+    else {
+        $command = Get-Command iscc -ErrorAction SilentlyContinue
+        if ($command) { $Iscc = $command.Source }
+    }
 }
 
 if (-not $Iscc) {
