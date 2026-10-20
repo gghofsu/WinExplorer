@@ -1,0 +1,358 @@
+<Window x:Class="WinExplorer.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="WinExplorer"
+        Width="760" Height="700"
+        MinWidth="640" MinHeight="520"
+        Background="{StaticResource WindowBackground}"
+        WindowStartupLocation="CenterScreen"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Grid.Row="0" Background="#111827" Padding="22,18">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Width="44" Height="44" CornerRadius="11" Background="#1F2937"
+                        VerticalAlignment="Center">
+                    <Image Source="pack://application:,,,/Assets/app.png" Width="32" Height="32" />
+                </Border>
+
+                <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="WinExplorer" FontSize="20" FontWeight="SemiBold" Foreground="White" />
+                    <TextBlock Text="Every folder opens as a tab in the window you already have."
+                               Foreground="#9CA3AF" FontSize="12" Margin="0,2,0,0" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border CornerRadius="999" Padding="11,5" Background="#1F2937" Margin="0,0,10,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,7,0">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="#F59E0B" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsEnabled}" Value="True">
+                                                <Setter Property="Fill" Value="#34D399" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="{Binding Headline}" Foreground="White" FontSize="12" />
+                        </StackPanel>
+                    </Border>
+
+                    <Button Content="{Binding ToggleLabel}" Command="{Binding TogglePauseCommand}"
+                            Style="{StaticResource PrimaryButton}" Padding="14,7"
+                            Background="#F59E0B" Foreground="#1F2937" FontWeight="SemiBold" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Content -->
+        <TabControl Grid.Row="1" Margin="18,14,18,0">
+
+            <!-- ============ General ============ -->
+            <TabItem Header="General">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="0,0,6,12">
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="Opening folders" Style="{StaticResource SectionTitle}" />
+
+                                <CheckBox Content="Double-clicking a folder opens it as a tab"
+                                          IsChecked="{Binding InterceptDoubleClick, Mode=TwoWay}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,6"
+                                           Text="Holds Ctrl, Alt, Shift or Win to keep plain Windows behaviour." />
+
+                                <CheckBox Content="Middle-clicking a folder opens it in a background tab"
+                                          IsChecked="{Binding InterceptMiddleClick, Mode=TwoWay}" />
+
+                                <Grid Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="When the folder is already open"
+                                               VerticalAlignment="Center" Margin="0,0,14,0" />
+                                    <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
+                                              ItemsSource="{Binding AlreadyOpenOptions}"
+                                              DisplayMemberPath="Display"
+                                              SelectedValuePath="Value"
+                                              SelectedValue="{Binding WhenAlreadyOpen, Mode=TwoWay}" />
+                                </Grid>
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,6,0,0"
+                                           Text="Duplicates are still possible: choose &quot;Open in new tab&quot; or &quot;Open in new window&quot; from the folder's right-click menu, or use the duplicate shortcut." />
+
+                                <CheckBox Content="Look for an already open copy in every Explorer window"
+                                          Margin="0,12,0,0"
+                                          IsChecked="{Binding DedupeAcrossAllWindows, Mode=TwoWay}" />
+                                <CheckBox Content="Bring the new tab to the front"
+                                          IsChecked="{Binding ActivateNewTab, Mode=TwoWay}" />
+
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Open new tabs in" VerticalAlignment="Center"
+                                               Margin="0,0,14,0" />
+                                    <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
+                                              ItemsSource="{Binding TargetWindowOptions}"
+                                              DisplayMemberPath="Display"
+                                              SelectedValuePath="Value"
+                                              SelectedValue="{Binding TargetWindow, Mode=TwoWay}" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="Other ways windows appear" Style="{StaticResource SectionTitle}" />
+
+                                <CheckBox Content="Fold other new Explorer windows into tabs"
+                                          IsChecked="{Binding MergeNewWindows, Mode=TwoWay}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,8"
+                                           Text="Catches folders opened from the desktop, Start, another app or Win+E. Right after a right-click the window is left alone, so &quot;Open in new window&quot; still works; hold Ctrl+Shift to force a window." />
+
+                                <CheckBox Content="Keep virtual folders (This PC, Recycle Bin, …) as windows"
+                                          IsChecked="{Binding KeepVirtualFoldersAsWindows, Mode=TwoWay}" />
+
+                                <CheckBox Content="Use Win+E to open a tab instead of a window"
+                                          IsChecked="{Binding TakeOverWinE, Mode=TwoWay}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="Windows integration" Style="{StaticResource SectionTitle}" />
+
+                                <CheckBox Content="Add &quot;Open in WinExplorer tab&quot; to the folder right-click menu"
+                                          IsChecked="{Binding ContextMenuInstalled, Mode=TwoWay}" />
+
+                                <CheckBox Content="Use WinExplorer for every folder double-click in Windows"
+                                          Margin="0,8,0,0"
+                                          IsChecked="{Binding DefaultFolderHandler, Mode=TwoWay}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,6"
+                                           Text="Registers WinExplorer as the default handler for folders in your user account. Restores the previous handler when switched off." />
+
+                                <CheckBox Content="Start WinExplorer when I sign in"
+                                          IsChecked="{Binding StartWithWindows, Mode=TwoWay}" />
+                                <CheckBox Content="Close button keeps WinExplorer running in the notification area"
+                                          IsChecked="{Binding MinimizeToTrayOnClose, Mode=TwoWay}" />
+                                <CheckBox Content="Show a notification when a tab is opened or switched"
+                                          IsChecked="{Binding ShowNotifications, Mode=TwoWay}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="Folders that keep normal Windows behaviour"
+                                           Style="{StaticResource SectionTitle}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,-4,0,8"
+                                           Text="Double-clicks in these folders open a window like Windows normally does." />
+
+                                <ListBox ItemsSource="{Binding ExcludedPaths}"
+                                         SelectedItem="{Binding SelectedExcludedPath, Mode=TwoWay}"
+                                         Height="96" />
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Button Content="Add folder…" Style="{StaticResource SubtleButton}"
+                                            Command="{Binding AddExcludedPathCommand}" />
+                                    <Button Content="Remove" Style="{StaticResource SubtleButton}" Margin="8,0,0,0"
+                                            Command="{Binding RemoveExcludedPathCommand}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ============ Shortcuts ============ -->
+            <TabItem Header="Shortcuts">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,0,6,12">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="Global shortcuts" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,-4,0,14"
+                                           Text="Click a box and press the keys you want. Shortcuts need at least one modifier key. Press Backspace to clear one." />
+
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="200" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                        <TextBlock Text="Duplicate the active tab" />
+                                        <TextBlock Style="{StaticResource Caption}"
+                                                   Text="Creates a second tab with the same folder — an allowed duplicate." />
+                                    </StackPanel>
+                                    <TextBox Grid.Column="1" x:Name="DuplicateHotkeyBox" Tag="duplicate"
+                                             IsReadOnly="True" Cursor="Hand"
+                                             Text="{Binding DuplicateHotkey, Mode=OneWay}"
+                                             PreviewKeyDown="HotkeyBox_PreviewKeyDown" />
+                                </Grid>
+
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="200" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                        <TextBlock Text="Reopen the last closed folder" />
+                                        <TextBlock Style="{StaticResource Caption}"
+                                                   Text="Works like a browser: the most recently closed tab comes back." />
+                                    </StackPanel>
+                                    <TextBox Grid.Column="1" x:Name="ReopenHotkeyBox" Tag="reopen"
+                                             IsReadOnly="True" Cursor="Hand"
+                                             Text="{Binding ReopenClosedHotkey, Mode=OneWay}"
+                                             PreviewKeyDown="HotkeyBox_PreviewKeyDown" />
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="200" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                        <TextBlock Text="Pause / resume WinExplorer" />
+                                        <TextBlock Style="{StaticResource Caption}"
+                                                   Text="Works everywhere, even when File Explorer is not focused." />
+                                    </StackPanel>
+                                    <TextBox Grid.Column="1" x:Name="ToggleHotkeyBox" Tag="toggle"
+                                             IsReadOnly="True" Cursor="Hand"
+                                             Text="{Binding TogglePauseHotkey, Mode=OneWay}"
+                                             PreviewKeyDown="HotkeyBox_PreviewKeyDown" />
+                                </Grid>
+
+                                <Button Content="Reset to defaults" Style="{StaticResource SubtleButton}"
+                                        HorizontalAlignment="Left" Margin="0,16,0,0"
+                                        Command="{Binding ResetHotkeysCommand}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="How the rules work" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6"
+                                           Text="• A folder that is already open anywhere is never duplicated: you are switched to the tab that shows it." />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6"
+                                           Text="• A duplicate only appears when you ask for one: right-click → Open in new tab / Open in new window, the duplicate shortcut, or the command line switches --new-tab and --new-window." />
+                                <TextBlock Style="{StaticResource Caption}"
+                                           Text="• The folder context menu is registered per user, so no administrator rights are needed." />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ============ Activity ============ -->
+            <TabItem Header="Activity">
+                <Grid Margin="0,0,6,12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="10">
+                        <ListBox ItemsSource="{Binding Activity}" BorderThickness="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12"
+                                               FontFamily="Cascadia Mono, Consolas, monospace" />
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+
+                    <StackPanel Grid.Row="1" Orientation="Horizontal">
+                        <Button Content="Open log file" Style="{StaticResource SubtleButton}"
+                                Command="{Binding OpenLogCommand}" />
+                        <Button Content="Open data folder" Style="{StaticResource SubtleButton}" Margin="8,0,0,0"
+                                Command="{Binding OpenDataFolderCommand}" />
+                        <Button Content="Clear list" Style="{StaticResource SubtleButton}" Margin="8,0,0,0"
+                                Command="{Binding ClearActivityCommand}" />
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <!-- ============ About ============ -->
+            <TabItem Header="About">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,0,6,12">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="WinExplorer" Style="{StaticResource Title}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,12">
+                                    <Run Text="Version " />
+                                    <Run Text="{Binding VersionText, Mode=OneWay}" />
+                                </TextBlock>
+
+                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,10">
+                                    WinExplorer gives Windows 11 File Explorer the behaviour of a browser: folders
+                                    open in tabs of the window you are already using, and opening a folder that is
+                                    already open brings its tab to the front instead of creating a duplicate.
+                                </TextBlock>
+
+                                <TextBlock Text="How it works" Style="{StaticResource SectionTitle}" Margin="0,8,0,6" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6"
+                                           Text="• A low level mouse hook notices double-clicks and middle-clicks on folder rows and asks Explorer for a new tab (the same command Ctrl+T uses)." />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6"
+                                           Text="• Tab contents are navigated through the shell automation API, so every tab can be addressed individually." />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6"
+                                           Text="• Optionally, WinExplorer registers itself as the default folder handler so double-clicks outside Explorer are folded in too." />
+                                <TextBlock Style="{StaticResource Caption}"
+                                           Text="• Everything runs inside your user account. No drivers, no admin rights, no system files are patched." />
+
+                                <TextBlock Text="Known limits" Style="{StaticResource SectionTitle}" Margin="0,14,0,6" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6"
+                                           Text="• Tabs need Windows 11 22H2 or newer. On Windows 10 folders keep opening in windows." />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6"
+                                           Text="• Tab commands are undocumented Explorer internals, so a Windows update can break them. WinExplorer verifies every step and falls back to a normal window." />
+                                <TextBlock Style="{StaticResource Caption}"
+                                           Text="• Folders inside archives, search results and other virtual locations keep Explorer's own behaviour." />
+
+                                <TextBlock Text="Data" Style="{StaticResource SectionTitle}" Margin="0,14,0,6" />
+                                <TextBlock Style="{StaticResource Caption}" Text="{Binding DataFolder, Mode=OneWay}" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <!-- Footer -->
+        <Border Grid.Row="2" Background="#EDEFF3" BorderBrush="#DDE2E9" BorderThickness="0,1,0,0"
+                Padding="18,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0" Text="{Binding StatusText}" VerticalAlignment="Center"
+                           Foreground="{StaticResource TextSecondary}" FontSize="12"
+                           TextTrimming="CharacterEllipsis" />
+
+                <Button Grid.Column="1" Content="Close" Style="{StaticResource SubtleButton}"
+                        Click="CloseButton_Click" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

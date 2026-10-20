@@ -1,0 +1,29 @@
+# Build output
+bin/
+obj/
+publish/
+artifacts/
+installer/Output/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# Test results / coverage
+TestResults/
+coverage*
+*.trx
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local scratch
+*.log
+scratch/
