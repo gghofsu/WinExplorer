@@ -17,31 +17,101 @@ internal sealed record ShellTabLocation(nint TabHwnd, nint WindowHwnd, string Lo
 /// </remarks>
 internal static class ShellCom
 {
-    /// <summary>
-    /// Returns tab handle -> location for every Explorer tab the shell knows about.
-    /// Never throws.
-    /// </summary>
-    public static Dictionary<nint, ShellTabLocation> QueryTabLocations()
+    // One Shell.Application instance per shell (STA) thread. Creating one per query several
+    // times a second is both slow and a good way to upset the shell's automation server.
+    [ThreadStatic] private static object? _shell;
+
+    [ThreadStatic]
+    private static (long Tick, Dictionary<nint, ShellTabLocation> Map) _memo;
+
+    /// <summary>Why the last query came back empty (for the log, --diagnose and --probe).</summary>
+    public static string LastError { get; private set; } = string.Empty;
+
+    /// <summary>How many windows the shell automation reported in the last query.</summary>
+    public static int LastWindowCount { get; private set; }
+
+    /// <summary>True when the shell automation itself works (it returned at least one entry).</summary>
+    public static bool AutomationAnswered => LastWindowCount > 0;
+
+    private static void Note(string message)
     {
-        var result = new Dictionary<nint, ShellTabLocation>();
-        object? shell = null;
-        object? windows = null;
+        if (LastError.Length == 0)
+            LastError = message;
+    }
+
+    private static void NoteException(string where, Exception ex) =>
+        Note($"{where}: {ex.GetType().Name} 0x{ex.HResult:X8} {ex.Message}");
+
+    private static object? Shell()
+    {
+        if (_shell is not null)
+            return _shell;
 
         try
         {
             var type = Type.GetTypeFromProgID("Shell.Application");
             if (type is null)
-                return result;
+            {
+                Note("Shell.Application is not registered.");
+                return null;
+            }
 
-            shell = Activator.CreateInstance(type);
+            _shell = Activator.CreateInstance(type);
+            if (_shell is null)
+                Note("Shell.Application could not be created.");
+        }
+        catch (Exception ex)
+        {
+            NoteException("Shell.Application", ex);
+            _shell = null;
+        }
+
+        return _shell;
+    }
+
+    private static void DropShell()
+    {
+        var shell = _shell;
+        _shell = null;
+        if (shell is not null && Marshal.IsComObject(shell))
+        {
+            try { Marshal.ReleaseComObject(shell); } catch { /* ignore */ }
+        }
+    }
+
+    /// <summary>
+    /// Returns tab handle -> location for every Explorer tab the shell knows about.
+    /// Never throws.
+    /// </summary>
+    public static Dictionary<nint, ShellTabLocation> QueryTabLocations(bool fresh = false)
+    {
+        // A consolidation pass asks for every tab in a row; enumerating once per frame is
+        // enough and keeps the automation server out of trouble.
+        if (!fresh && _memo.Tick != 0 && Environment.TickCount64 - _memo.Tick < 250)
+            return _memo.Map;
+
+        var result = new Dictionary<nint, ShellTabLocation>();
+        LastError = string.Empty;
+        LastWindowCount = 0;
+
+        object? windows = null;
+        try
+        {
+            var shell = Shell();
             if (shell is null)
                 return result;
 
             windows = GetProperty(shell, "Windows");
             if (windows is null)
+            {
+                Note("Shell.Application.Windows returned nothing.");
                 return result;
+            }
 
             var count = ToInt(GetProperty(windows, "Count"));
+            LastWindowCount = count;
+            if (count == 0)
+                Note("The shell reports no Explorer windows at all.");
             for (var i = 0; i < count; i++)
             {
                 object? window = null;
@@ -61,9 +131,10 @@ internal static class ShellCom
                     // The shell may hand us the same tab twice while it is being created.
                     result[hwnd] = new ShellTabLocation(hwnd, ParentWindowOf(hwnd), PathNormalizer.Normalize(location), name);
                 }
-                catch
+                catch (Exception ex)
                 {
                     // Ignore a single broken/closed item and keep enumerating.
+                    NoteException($"Shell.Windows.Item({i})", ex);
                 }
                 finally
                 {
@@ -72,19 +143,35 @@ internal static class ShellCom
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Shell automation unavailable (rare, e.g. during Explorer restart).
+            // Shell automation unavailable (rare, e.g. during Explorer restart). Throw the
+            // cached object away so the next call starts from a clean apartment object.
+            NoteException("Shell.Windows", ex);
+            DropShell();
         }
         finally
         {
             if (windows is not null && Marshal.IsComObject(windows))
-                Marshal.ReleaseComObject(windows);
-            if (shell is not null && Marshal.IsComObject(shell))
-                Marshal.ReleaseComObject(shell);
+            {
+                try { Marshal.ReleaseComObject(windows); } catch { /* ignore */ }
+            }
         }
 
+        _memo = (Environment.TickCount64, result);
         return result;
+    }
+
+    /// <summary>Forgets the memo (after navigating a tab).</summary>
+    public static void InvalidateMemo() => _memo = (0, new Dictionary<nint, ShellTabLocation>());
+
+    /// <summary>State of the shell automation, for --diagnose / --probe.</summary>
+    public static string Describe()
+    {
+        var shell = _shell is null ? "not created" : "cached";
+        var answer = AutomationAnswered ? "answered" : "no data";
+        var error = LastError.Length == 0 ? "(none)" : LastError;
+        return $"shell automation: {shell}, {answer}, {LastWindowCount} window(s), last error {error}";
     }
 
     /// <summary>Location of a single tab; empty when the shell does not know it yet.</summary>
@@ -94,7 +181,11 @@ internal static class ShellCom
             return null;
 
         var map = QueryTabLocations();
-        return map.TryGetValue(tabHwnd, out var entry) ? entry.Location : null;
+        if (map.TryGetValue(tabHwnd, out var entry) && !string.IsNullOrEmpty(entry.Location))
+            return entry.Location;
+
+        // The automation server did not know this tab; ask the tab's own UI instead.
+        return AddressBarText.TryRead(tabHwnd);
     }
 
     /// <summary>Location of the tab that currently has focus in <paramref name="windowHwnd"/>.</summary>
@@ -112,11 +203,15 @@ internal static class ShellCom
 
         foreach (var candidate in map.Values)
         {
-            if (candidate.WindowHwnd == windowHwnd)
+            if (candidate.WindowHwnd == windowHwnd && !string.IsNullOrEmpty(candidate.Location))
                 return candidate.Location;
         }
 
-        return null;
+        // Second opinion: the active tab's own address bar, then the window's.
+        if (activeTab != 0 && AddressBarText.TryRead(activeTab) is { Length: > 0 } fromTab)
+            return fromTab;
+
+        return AddressBarText.TryRead(windowHwnd);
     }
 
     /// <summary>
@@ -129,7 +224,10 @@ internal static class ShellCom
             return false;
 
         if (NavigateOnce(tabHwnd, location))
+        {
+            InvalidateMemo();
             return true;
+        }
 
         // A tab this fresh may not be registered with the shell yet.
         Thread.Sleep(150);
@@ -167,15 +265,10 @@ internal static class ShellCom
 
     private static bool NavigateOnce(nint tabHwnd, string location)
     {
-        object? shell = null;
         object? windows = null;
         try
         {
-            var type = Type.GetTypeFromProgID("Shell.Application");
-            if (type is null)
-                return false;
-
-            shell = Activator.CreateInstance(type);
+            var shell = Shell();
             if (shell is null)
                 return false;
 
@@ -213,16 +306,17 @@ internal static class ShellCom
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // fall through
+            NoteException("Navigate2", ex);
+            DropShell();
         }
         finally
         {
             if (windows is not null && Marshal.IsComObject(windows))
-                Marshal.ReleaseComObject(windows);
-            if (shell is not null && Marshal.IsComObject(shell))
-                Marshal.ReleaseComObject(shell);
+            {
+                try { Marshal.ReleaseComObject(windows); } catch { /* ignore */ }
+            }
         }
 
         return false;

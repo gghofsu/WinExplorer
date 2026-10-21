@@ -23,6 +23,7 @@ public enum CommandKind
     Restart,
     Consolidate,
     Diagnose,
+    Probe,
     ShowLog,
     Help,
     Version
@@ -241,6 +242,11 @@ public static class CommandLine
                     SetKind(CommandKind.Consolidate);
                     break;
 
+                case "probe":
+                case "--probe":
+                    SetKind(CommandKind.Probe);
+                    break;
+
                 case "diagnose":
                 case "--diagnose":
                 case "--doctor":
@@ -322,6 +328,7 @@ public static class CommandLine
           WinExplorer.exe --single-window        Fold every Explorer window into one tabbed window
           WinExplorer.exe --restart              Restart the helper (recovers a stuck copy)
           WinExplorer.exe --diagnose             Write a diagnostics report and open it
+          WinExplorer.exe --probe                List every window, tab and folder the app can see
           WinExplorer.exe --exit
         """;
 }

@@ -93,6 +93,13 @@ alone from then on:
   that folder is the deliberate one. A right-click on a *file*, on empty space or in another
   app does not stop anything.
 
+The folder of a tab is read from the shell automation (`Shell.Application`). That call runs on
+a dedicated STA thread that dispatches messages while it waits — without that, Explorer's
+automation server answers with nothing at all, and no window could ever be compared with
+another. When the automation server still refuses to say what a tab shows, the folder is read
+straight off the tab's own address bar, and a shell call that never returns is abandoned after
+a couple of seconds instead of freezing the app.
+
 The pass that does this runs on its own timer (about once a second), independent of the tab
 bookkeeping, and it repairs itself: if Explorer refuses to create a tab for a moment — which
 happens while a folder is loading — WinExplorer retries, and it keeps trying in later passes
@@ -284,6 +291,7 @@ WinExplorer.exe --install-startup | --uninstall-startup | --toggle-startup
 WinExplorer.exe --single-window         Fold every Explorer window into one tabbed window
 WinExplorer.exe --restart                Restart the helper (recovers a hung copy)
 WinExplorer.exe --diagnose               Write a diagnostics report and open it
+WinExplorer.exe --probe                  List every window, tab and folder the app can see
 WinExplorer.exe --log                    Open the log file
 WinExplorer.exe --exit                   Stop the helper
 WinExplorer.exe --version | --help
@@ -326,6 +334,10 @@ All three can be changed in the **Shortcuts** tab.
   kept (`kept as a window: ...`); `--diagnose` shows the last lines.
 - **A window appears and then turns into a tab** — that is the fold-in working: Windows had
   already drawn the window. `--single-window` or the tray item does the same thing by hand.
+- **Nothing is folded and the log says "never reported a folder" / "not readable yet"** —
+  the shell is not telling the app which folder a tab shows. Run `--probe`: it lists every
+  window and tab *with* the folder the app managed to read, plus the state of the shell
+  automation (`no data` means the automation server itself is refusing). Send that report.
 - **Nothing is folded at all** — look for `Explorer did not create a tab` in the log. Windows
   11 22H2+ is required; on older builds the app cannot create tabs and every folder falls
   back to a window (which is also what the tab lookups need). `--restart` reloads the helper

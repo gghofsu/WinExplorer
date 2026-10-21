@@ -65,6 +65,10 @@ internal static class Diagnostics
         builder.AppendLine($"  Single window mode      : {settings.SingleWindowMode}");
         builder.AppendLine($"  Fold new windows        : {settings.MergeNewWindows}");
         builder.AppendLine($"  Fold existing windows   : {settings.MergeExistingWindows}");
+        builder.AppendLine();
+        builder.AppendLine("Shell");
+        builder.AppendLine("  " + Shell.ShellCom.Describe());
+        builder.AppendLine("  " + StaExecutor.HealthSummary());
         builder.AppendLine($"  Minimize to tray        : {settings.MinimizeToTrayOnClose}");
         builder.AppendLine();
 

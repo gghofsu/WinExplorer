@@ -89,6 +89,11 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
 - [ ] Settings → *Keep a single File Explorer window* off → new windows stay windows again.
 - [ ] `WinExplorer.exe --single-window` → one window is left, no crash with a second copy
       running.
+- [ ] `WinExplorer.exe --probe` prints every window with each tab's folder, and no tab says
+      `(no folder reported)`.
+- [ ] Leave the settings window open for ten minutes and check the log: no
+      `a shell call did not finish in time` lines (they would mean the shell thread is stuck).
+- [ ] `--diagnose` shows a `Shell` section with `shell automation: cached, answered, N window(s)`.
 - [ ] The same with *Keep virtual folders as windows* on: a second window showing only
       *Recycle Bin* is **not** closed.
 

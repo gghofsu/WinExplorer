@@ -75,6 +75,11 @@ public partial class App : Application
                 RunDiagnostics();
                 Shutdown(0);
                 return;
+
+            case CommandKind.Probe:
+                RunProbe();
+                Shutdown(0);
+                return;
         }
 
         if (options.Kind == CommandKind.Restart)
@@ -683,6 +688,72 @@ public partial class App : Application
     }
 
     /// <summary><c>--diagnose</c>: writes a report next to the settings and opens it.</summary>
+    /// <summary>
+    /// Dumps what the app can actually see: every Explorer window, its tabs and the folder
+    /// behind each tab, plus the state of the shell automation. Works without the helper, so
+    /// it also runs when the helper is wedged.
+    /// </summary>
+    private void RunProbe()
+    {
+        string path = Path.Combine(AppPaths.DataDirectory, "WinExplorer-probe.txt");
+        try
+        {
+            AppPaths.EnsureDataDirectory();
+
+            var builder = new System.Text.StringBuilder();
+            builder.AppendLine($"WinExplorer probe - {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
+            builder.AppendLine($"Version   : {typeof(App).Assembly.GetName().Version}");
+            builder.AppendLine($"Windows   : {Environment.OSVersion.VersionString}");
+            builder.AppendLine();
+
+            var tabs = new WinExplorer.Shell.TabController(_log!);
+            try
+            {
+                builder.AppendLine("Shell");
+                builder.AppendLine("  " + tabs.DescribeShellHealth());
+                builder.AppendLine("  shell threads: " + WinExplorer.Services.StaExecutor.HealthSummary());
+                builder.AppendLine();
+
+                var windows = WinExplorer.Shell.ExplorerWindows.GetWindows();
+                builder.AppendLine($"Windows ({windows.Count})");
+
+                foreach (var window in windows)
+                {
+                    builder.AppendLine($"  0x{window:X}  '{WinExplorer.Interop.NativeMethods.GetClassName(window)}'");
+                    var tabHandles = WinExplorer.Shell.ExplorerWindows.GetTabs(window);
+                    if (tabHandles.Count == 0)
+                    {
+                        builder.AppendLine("    (no tab windows found)");
+                        continue;
+                    }
+
+                    foreach (var tab in tabHandles)
+                    {
+                        var location = tabs.GetTabLocationAsync(tab).GetAwaiter().GetResult();
+                        builder.AppendLine($"    tab 0x{tab:X}  {location ?? "(no folder reported)"}");
+                    }
+                }
+
+                builder.AppendLine();
+                builder.AppendLine("Shell automation");
+                builder.AppendLine("  " + WinExplorer.Shell.ShellCom.Describe());
+            }
+            finally
+            {
+                tabs.Dispose();
+            }
+
+            File.WriteAllText(path, builder.ToString(), System.Text.Encoding.UTF8);
+            ConsoleHelper.WriteLine(builder.ToString());
+            ConsoleHelper.WriteLine($"Probe written to {path}");
+            Diagnostics.Open(path);
+        }
+        catch (Exception ex)
+        {
+            ConsoleHelper.WriteLine($"The probe could not be written: {ex.Message}");
+        }
+    }
+
     private void RunDiagnostics()
     {
         try

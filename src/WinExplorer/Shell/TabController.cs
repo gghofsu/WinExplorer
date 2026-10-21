@@ -22,8 +22,8 @@ namespace WinExplorer.Shell;
 /// </remarks>
 internal sealed class TabController : IDisposable
 {
-    private readonly StaExecutor _querySta = new("WinExplorer.Shell.Query");
-    private readonly StaExecutor _navSta = new("WinExplorer.Shell.Navigate");
+    private readonly StaExecutor _querySta;
+    private readonly StaExecutor _navSta;
     private readonly Logger _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<nint, long> _selfCreatedWindows = new();
@@ -34,7 +34,21 @@ internal sealed class TabController : IDisposable
     private int _consecutiveTabFailures;
     private bool _unsupportedWarned;
 
-    public TabController(Logger log) => _log = log;
+    public TabController(Logger log)
+    {
+        _log = log;
+
+        // The logger is passed down so a wedged shell call is visible in the log instead of
+        // silently turning every location into an empty string.
+        _querySta = new StaExecutor("WinExplorer.Shell.Query", 6000, log);
+        _navSta = new StaExecutor("WinExplorer.Shell.Navigate", 8000, log);
+    }
+
+    /// <summary>Health of the shell threads, for --diagnose / --probe.</summary>
+    public string DescribeShellHealth() =>
+        $"query thread {_querySta.ThreadName}, {_querySta.HungCalls} abandoned call(s); " +
+        $"navigate thread {_navSta.ThreadName}, {_navSta.HungCalls} abandoned call(s); " +
+        ShellCom.Describe();
 
     /// <summary>Raised with a human readable message for the UI/tray.</summary>
     public event EventHandler<string>? Activity;
@@ -158,7 +172,8 @@ internal sealed class TabController : IDisposable
             ExplorerWindows.InvalidateCache();
             var tab = new ExplorerTab(newTab, windowHwnd, string.Empty, PathNormalizer.ToDisplayName(location));
 
-            var navigated = await _navSta.RunAsync(() => ShellCom.NavigateTab(newTab, location)).ConfigureAwait(false);
+                var navigated = await _navSta.RunWithTimeoutAsync(() => ShellCom.NavigateTab(newTab, location), false, 4000)
+                .ConfigureAwait(false);
             if (!navigated)
             {
                 _log.Warn($"Tab 0x{newTab:X} was created but the shell would not navigate it to '{location}'.");
@@ -166,10 +181,11 @@ internal sealed class TabController : IDisposable
             }
 
             var confirmed = await _querySta
-                .RunAsync(() => ShellCom.WaitForLocation(newTab, location, 3000))
+                .RunWithTimeoutAsync(() => ShellCom.WaitForLocation(newTab, location, 3000), false, 4500)
                 .ConfigureAwait(false);
 
-            var actual = await _querySta.RunAsync(() => ShellCom.GetTabLocation(newTab)).ConfigureAwait(false);
+            var actual = await _querySta.RunWithTimeoutAsync<string?>(() => ShellCom.GetTabLocation(newTab), null, 2000)
+                .ConfigureAwait(false);
             tab = tab with { Location = string.IsNullOrEmpty(actual) ? PathNormalizer.Normalize(location) : actual };
 
             if (!confirmed)
@@ -342,14 +358,15 @@ internal sealed class TabController : IDisposable
 
     /// <summary>Location currently shown by a tab (empty when unknown).</summary>
     public Task<string?> GetTabLocationAsync(nint tabHwnd, CancellationToken cancellationToken = default) =>
-        _querySta.RunAsync(() => ShellCom.GetTabLocation(tabHwnd));
+        _querySta.RunWithTimeoutAsync<string?>(() => ShellCom.GetTabLocation(tabHwnd), null, 2500);
 
     /// <summary>The location shown by the active tab of a window.</summary>
     public Task<string?> GetActiveLocationAsync(nint windowHwnd, CancellationToken cancellationToken = default) =>
-        _querySta.RunAsync(() => ShellCom.GetActiveTabLocation(windowHwnd));
+        _querySta.RunWithTimeoutAsync<string?>(() => ShellCom.GetActiveTabLocation(windowHwnd), null, 2500);
 
-    /// <summary>Runs a shell query on the dedicated STA thread.</summary>
-    public Task<T> RunOnQueryThreadAsync<T>(Func<T> func) => _querySta.RunAsync(func);
+    /// <summary>Runs a shell query on the dedicated STA thread (abandoned if the shell hangs).</summary>
+    public Task<T> RunOnQueryThreadAsync<T>(Func<T> func) =>
+        _querySta.RunWithTimeoutAsync(func, default!, 4000);
 
     /// <summary>Confirms with the shell that both locations are the same folder.</summary>
     public Task<bool> AreSameLocationAsync(string? a, string? b, CancellationToken cancellationToken = default)
@@ -357,7 +374,7 @@ internal sealed class TabController : IDisposable
         if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b))
             return Task.FromResult(false);
 
-        return _querySta.RunAsync(() => ShellCom.LocationsMatch(a, b));
+        return _querySta.RunWithTimeoutAsync(() => ShellCom.LocationsMatch(a, b), false, 3000);
     }
 
     // ------------------------------------------------------------------
