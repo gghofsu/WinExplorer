@@ -44,7 +44,30 @@ jobs:
         run: dotnet build WinExplorer.sln -c Release --no-restore
 
       - name: Test
-        run: dotnet test WinExplorer.sln -c Release --no-build --logger "console;verbosity=normal"
+        shell: pwsh
+        run: |
+          dotnet test WinExplorer.sln -c Release --no-build `
+            --logger "console;verbosity=normal" `
+            --logger "trx;LogFileName=results.trx" `
+            --results-directory TestResults
+          $code = $LASTEXITCODE
+
+          # Surface failing tests as check annotations: the runner log is not always
+          # downloadable from the API, annotations always are.
+          $trx = 'TestResults/results.trx'
+          if (Test-Path $trx) {
+            [xml]$results = Get-Content $trx
+            foreach ($result in $results.TestRun.Results.UnitTestResult) {
+              if ($result.outcome -eq 'Failed') {
+                $message = $result.Output.ErrorInfo.Message
+                if (-not $message) { $message = $result.Output.ErrorInfo.'#text' }
+                $message = ($message -replace '\r?\n', ' ').Trim()
+                Write-Host "::error title=$($result.testName)::$message"
+              }
+            }
+          }
+
+          exit $code
 
       - name: Publish (framework-dependent)
         run: >
