@@ -6,11 +6,6 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
-    inputs:
-      build_installer:
-        description: 'Also compile the Inno Setup installer'
-        type: boolean
-        default: false
 
 jobs:
   build:

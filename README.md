@@ -128,10 +128,10 @@ add `-NoStartup` or `-NoContextMenu`.
 
 ### Setup wizard
 
-`WinExplorer-<version>-setup.exe` (built on release tags) is an optional wizard made with
-[Inno Setup](https://jrsoftware.org/isdl.php) 6. It asks the same two questions as
-checkboxes and registers its own per-user uninstaller in **Settings → Apps**. To build it
-from source:
+`WinExplorer-<version>-setup.exe` (built by CI and attached to every release) is an
+optional wizard made with [Inno Setup](https://jrsoftware.org/isdl.php) 6. It asks the same
+two questions as checkboxes and registers its own per-user uninstaller in
+**Settings → Apps**. To build it from source:
 
 ```powershell
 .\scripts\make-installer.ps1                 # self-contained payload (no .NET needed)
