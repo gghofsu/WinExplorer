@@ -198,7 +198,8 @@ public partial class App : Application
             });
         }
         else if (options.Kind is CommandKind.DuplicateActiveTab or CommandKind.ReopenClosedTab
-                 or CommandKind.Toggle or CommandKind.Pause or CommandKind.Resume)
+                 or CommandKind.Toggle or CommandKind.Pause or CommandKind.Resume
+                 or CommandKind.Consolidate)
         {
             _ = Task.Run(async () =>
             {
@@ -239,9 +240,25 @@ public partial class App : Application
         toggleStartup: () => Dispatcher.BeginInvoke(ToggleStartup),
         duplicateTab: () => _ = _runtime!.DuplicateActiveTabAsync(),
         reopenClosed: () => _ = _runtime!.ReopenLastClosedAsync(),
+        collectWindows: () => _ = CollectWindowsAsync(),
         openLog: OpenLog,
         restart: Restart,
         exit: () => Dispatcher.BeginInvoke(ExitApplication));
+
+    /// <summary>Folds every other Explorer window into the current one (tray menu).</summary>
+    private async Task CollectWindowsAsync()
+    {
+        try
+        {
+            var folded = await _runtime!.ConsolidateWindowsAsync().ConfigureAwait(false);
+            if (folded == 0)
+                _tray?.ShowBalloon("There is only one File Explorer window open.");
+        }
+        catch (Exception ex)
+        {
+            _log?.Error("Collecting the Explorer windows failed", ex);
+        }
+    }
 
     /// <summary>Adds or removes the "start when I sign in" entry from the tray menu.</summary>
     private void ToggleStartup()

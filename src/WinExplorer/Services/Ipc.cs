@@ -275,6 +275,7 @@ public static class IpcClient
             CommandKind.Resume => "resume",
             CommandKind.Settings => "settings",
             CommandKind.Exit => "exit",
+            CommandKind.Consolidate => "consolidate",
             _ => "ping"
         },
         Path = options.Path,

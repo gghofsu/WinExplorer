@@ -53,8 +53,21 @@ public sealed class AppSettings
 
     // ---- Windows --------------------------------------------------------
 
+    /// <summary>
+    /// Keep exactly one File Explorer window. Every folder opens as a tab in that window and
+    /// extra windows are folded in, unless the user explicitly asked for a window
+    /// (Shift+double-click, or right-click → Open in new window).
+    /// </summary>
+    public bool SingleWindowMode { get; set; } = true;
+
     /// <summary>Fold newly appearing Explorer windows into tabs.</summary>
     public bool MergeNewWindows { get; set; } = true;
+
+    /// <summary>
+    /// Also fold windows that are already open (not just new ones), so the desktop ends up
+    /// with a single tabbed window. Only used while <see cref="SingleWindowMode"/> is on.
+    /// </summary>
+    public bool MergeExistingWindows { get; set; } = true;
 
     /// <summary>Do not merge windows whose location is a virtual shell folder.</summary>
     public bool KeepVirtualFoldersAsWindows { get; set; } = true;
@@ -100,7 +113,9 @@ public sealed class AppSettings
         WhenAlreadyOpen = WhenAlreadyOpen,
         DedupeAcrossAllWindows = DedupeAcrossAllWindows,
         TargetWindow = TargetWindow,
+        SingleWindowMode = SingleWindowMode,
         MergeNewWindows = MergeNewWindows,
+        MergeExistingWindows = MergeExistingWindows,
         KeepVirtualFoldersAsWindows = KeepVirtualFoldersAsWindows,
         TakeOverWinE = TakeOverWinE,
         StartWithWindows = StartWithWindows,

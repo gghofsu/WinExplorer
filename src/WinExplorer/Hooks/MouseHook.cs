@@ -48,6 +48,7 @@ internal sealed class MouseHook : IDisposable
     private bool _blockMiddleUp;
 
     private static long _lastRightUpTick;
+    private static long _lastWindowGestureTick;
 
     public MouseHook(Logger log, Func<AppSettings> settings, Func<FolderClick, Task> handler)
     {
@@ -62,6 +63,19 @@ internal sealed class MouseHook : IDisposable
     /// <summary>True when the user released the right button within <paramref name="ms"/>.</summary>
     public static bool RightButtonReleasedRecently(int ms = 1200) =>
         _lastRightUpTick != 0 && Environment.TickCount64 - Interlocked.Read(ref _lastRightUpTick) < ms;
+
+    /// <summary>
+    /// True when the user recently asked for a separate window: Shift+double-click (or any
+    /// other modifier + double-click, which Windows handles itself). Windows opened during
+    /// this window are left alone by the merger, and are pinned afterwards.
+    /// </summary>
+    public static bool NewWindowGestureRecently(int ms = 3000) =>
+        _lastWindowGestureTick != 0 &&
+        Environment.TickCount64 - Interlocked.Read(ref _lastWindowGestureTick) < ms;
+
+    /// <summary>Records "the user wants a window" (used when a gesture is replayed).</summary>
+    public static void NoteNewWindowGesture() =>
+        Interlocked.Exchange(ref _lastWindowGestureTick, Environment.TickCount64);
 
     public void Start()
     {
@@ -156,10 +170,6 @@ internal sealed class MouseHook : IDisposable
         if (!settings.Enabled || !settings.InterceptDoubleClick)
             return false;
 
-        // Leave modified clicks (Ctrl+click, Shift+click for selection ranges, ...) alone.
-        if (NativeMethods.AnyModifierDown())
-            return false;
-
         var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
         if ((data.flags & NativeMethods.LLKHF_INJECTED) != 0)
             return false;
@@ -178,8 +188,17 @@ internal sealed class MouseHook : IDisposable
             return false;
         }
 
-        // A double-click: from here on the click belongs to us unless it is not a folder.
         _lastDownTick = 0;
+
+        // Shift+double-click (and Ctrl/Alt/Win+double-click) is the escape hatch: Windows
+        // opens the folder in its own window. Remember it so the watcher does not fold that
+        // window straight back into a tab.
+        if (NativeMethods.AnyModifierDown())
+        {
+            NoteNewWindowGesture();
+            _log.Debug("Modified double-click: leaving the window to Windows.");
+            return false;
+        }
 
         var click = Resolve(FolderClickKind.DoubleClick, lParam);
         if (click is null)

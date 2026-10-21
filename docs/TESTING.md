@@ -62,6 +62,27 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
       fires.
 - [ ] Restart WinExplorer → settings and shortcuts survive.
 
+### One window, many tabs
+
+- [ ] With the default settings, open two folders in Explorer, then a folder from the
+      desktop → there is still **one** window, with three tabs.
+- [ ] Open a second window from Start / the taskbar / Win+E → within ~2 s it disappears and
+      its folder is a tab of the first window.
+- [ ] Start WinExplorer while two Explorer windows are already open → after a few seconds
+      both are one window (the *Also fold windows that are already open* switch).
+- [ ] **Shift+double-click** a folder → a real second window appears and **stays** a window,
+      even after a minute and after opening more folders.
+- [ ] Right-click a folder → *Open in new window* → same: a second window that stays.
+- [ ] In that kept window, double-click another folder → the tab opens in that window (not in
+      the first one).
+- [ ] Tray menu → *Collect windows into one* → the extra windows are folded in at once, the
+      pinned one stays.
+- [ ] Settings → *Keep a single File Explorer window* off → new windows stay windows again.
+- [ ] `WinExplorer.exe --single-window` → one window is left, no crash with a second copy
+      running.
+- [ ] The same with *Keep virtual folders as windows* on: a second window showing only
+      *Recycle Bin* is **not** closed.
+
 ### Window folding
 
 - [ ] Enable *Fold other new Explorer windows into tabs*; open a folder from Start → it is

@@ -21,6 +21,7 @@ public enum CommandKind
     UninstallStartup,
     ToggleStartup,
     Restart,
+    Consolidate,
     Diagnose,
     ShowLog,
     Help,
@@ -233,6 +234,13 @@ public static class CommandLine
                     SetKind(CommandKind.Restart);
                     break;
 
+                case "single-window":
+                case "--single-window":
+                case "collect-windows":
+                case "--collect-windows":
+                    SetKind(CommandKind.Consolidate);
+                    break;
+
                 case "diagnose":
                 case "--diagnose":
                 case "--doctor":
@@ -311,6 +319,7 @@ public static class CommandLine
           WinExplorer.exe --pause | --resume | --toggle
           WinExplorer.exe --install-context-menu | --uninstall-context-menu
           WinExplorer.exe --install-startup | --uninstall-startup | --toggle-startup
+          WinExplorer.exe --single-window        Fold every Explorer window into one tabbed window
           WinExplorer.exe --restart              Restart the helper (recovers a stuck copy)
           WinExplorer.exe --diagnose             Write a diagnostics report and open it
           WinExplorer.exe --exit

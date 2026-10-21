@@ -62,7 +62,9 @@ internal static class Diagnostics
         builder.AppendLine($"  Folder context menu     : {settings.ContextMenuInstalled}");
         builder.AppendLine($"  Double-click as tab     : {settings.InterceptDoubleClick}");
         builder.AppendLine($"  Middle-click as tab     : {settings.InterceptMiddleClick}");
+        builder.AppendLine($"  Single window mode      : {settings.SingleWindowMode}");
         builder.AppendLine($"  Fold new windows        : {settings.MergeNewWindows}");
+        builder.AppendLine($"  Fold existing windows   : {settings.MergeExistingWindows}");
         builder.AppendLine($"  Minimize to tray        : {settings.MinimizeToTrayOnClose}");
         builder.AppendLine();
 

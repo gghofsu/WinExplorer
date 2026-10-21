@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using WinExplorer.Hooks;
 using WinExplorer.Interop;
 using WinExplorer.Shell;
 
@@ -219,6 +220,8 @@ internal sealed class ExplorerWatcher : IDisposable
 
             foreach (var location in closed)
                 _service.NotifyTabClosed(location);
+
+            await ConsolidateIfNeededAsync(windows).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -228,6 +231,37 @@ internal sealed class ExplorerWatcher : IDisposable
         {
             Interlocked.Exchange(ref _polling, 0);
         }
+    }
+
+    /// <summary>
+    /// Single window mode: fold extra windows that were not opened on purpose. Runs from the
+    /// poll, so a second window that appears (Start, taskbar, another app) disappears into a
+    /// tab within a second or two.
+    /// </summary>
+    private async Task ConsolidateIfNeededAsync(List<nint> windows)
+    {
+        var settings = _service.Settings;
+        if (!settings.Enabled || !settings.SingleWindowMode || !settings.MergeExistingWindows)
+            return;
+
+        // Windows restored at sign-in arrive in bulk; give the session a few seconds.
+        if (Environment.TickCount64 - _startedAt < 8000)
+            return;
+
+        if (windows.Count < 2)
+            return;
+
+        // An explicit "give me a window" gesture (Shift+double-click, Open in new window)
+        // must survive this pass; the service pins those windows, and the gesture timestamps
+        // cover the moment before the window is pinned.
+        if (MouseHook.NewWindowGestureRecently() || MouseHook.RightButtonReleasedRecently(2500))
+            return;
+
+        var folded = await _service.ConsolidateWindowsAsync().ConfigureAwait(false);
+        if (folded > 0)
+            Merged?.Invoke(this, folded == 1
+                ? "Folded an extra window into a tab."
+                : $"Folded {folded} extra windows into tabs.");
     }
 
     private void PruneKnownWindows(List<nint> windows)

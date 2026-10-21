@@ -146,6 +146,10 @@ internal sealed class AppRuntime : IDisposable
     public Task<OpenResult> OpenAsync(OpenRequest request, CancellationToken cancellationToken = default) =>
         _service.OpenAsync(request, cancellationToken);
 
+    /// <summary>Folds every other Explorer window into one tabbed window.</summary>
+    public Task<int> ConsolidateWindowsAsync(nint keepWindow = 0) =>
+        _service.ConsolidateWindowsAsync(keepWindow, force: true);
+
     public Task<OpenResult> DuplicateActiveTabAsync(nint window = 0, CancellationToken cancellationToken = default) =>
         _service.DuplicateActiveTabAsync(window, cancellationToken);
 
@@ -345,6 +349,16 @@ internal sealed class AppRuntime : IDisposable
 
                 case "ping":
                     return new IpcResponse { Ok = true, Outcome = "pong" };
+
+                case "consolidate":
+                {
+                    var folded = await _service.ConsolidateWindowsAsync(window).ConfigureAwait(false);
+                    return new IpcResponse
+                    {
+                        Ok = true,
+                        Outcome = folded > 0 ? $"folded {folded}" : "single window"
+                    };
+                }
 
                 default:
                     return new IpcResponse { Ok = false, Message = $"Unknown request '{request.Kind}'." };

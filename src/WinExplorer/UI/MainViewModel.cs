@@ -162,6 +162,29 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     // ---- Windows --------------------------------------------------------
+    public bool SingleWindowMode
+    {
+        get => _runtime.Settings.SingleWindowMode;
+        set => SetSetting(s =>
+        {
+            s.SingleWindowMode = value;
+
+            // One window only works with folding on, so switching the mode on turns the two
+            // folding switches back on as well.
+            if (value)
+            {
+                s.MergeNewWindows = true;
+                s.MergeExistingWindows = true;
+            }
+        });
+    }
+
+    public bool MergeExistingWindows
+    {
+        get => _runtime.Settings.MergeExistingWindows;
+        set => SetSetting(s => s.MergeExistingWindows = value);
+    }
+
     public bool MergeNewWindows
     {
         get => _runtime.Settings.MergeNewWindows;

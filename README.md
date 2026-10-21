@@ -43,7 +43,7 @@ right-click   → Open in new window        →  a separate window, because you 
 | **No accidental duplicates** | Opening a folder that is already shown anywhere switches to the tab that shows it (and brings its window forward). |
 | **Duplicates on demand** | Only an explicit request creates a second tab for the same folder: *Open in new tab*, *Open in new window* (right-click menu), the duplicate shortcut, or `--new-tab` / `--new-window` on the command line. |
 | **Middle-click** | Middle-clicking a folder opens it in a background tab, exactly like the built-in behaviour — but it also de-duplicates. |
-| **Window folding** *(optional)* | Windows opened from the desktop, Start, the taskbar or another app are folded into a tab too. Right after a right-click, and while Ctrl+Shift is held, windows are left alone so "Open in new window" keeps working. |
+| **One window, many tabs** | While a File Explorer window is open, every folder becomes a tab in it — double-click, Start, the taskbar, Win+E, another app, and even windows that were already open. Only *Shift+double-click* or right-click → *Open in new window* creates a second window, and that window is never folded back. |
 | **Duplicate / reopen shortcuts** | Global shortcuts to duplicate the current tab and to reopen the last closed folder, browser style. |
 | **Win+E as a tab** *(optional)* | Turn Win+E into "open This PC (or Home) as a tab". |
 | **One-click install and uninstall** | Double-click `Install.cmd` to install, `Uninstall.cmd` (or the entry Windows itself lists in *Settings → Apps*) to remove it. Startup is one checkbox — or one tray-menu click — either way. |
@@ -64,7 +64,8 @@ The whole app is built around one decision table:
 | Right-click → **Open in new window** | any | always a new window (duplicate allowed) |
 | Duplicate shortcut (`Alt+Shift+D`) | any | new tab with the same folder |
 | `--new-tab` / `--new-window` | any | always new tab / new window |
-| Ctrl / Alt / Shift / Win + double-click | any | plain Windows behaviour, WinExplorer steps aside |
+| Shift / Ctrl / Alt / Win + double-click | any | plain Windows behaviour: a real, separate window |
+| Any of those windows, later | — | stays a window; it is never folded into a tab |
 
 "Already open" is decided by asking the shell for the location of every tab in every
 File Explorer window. String comparison is the fast path; paths that differ textually
@@ -72,7 +73,27 @@ File Explorer window. String comparison is the fast path; paths that differ text
 shell item IDs (PIDLs), which is how Windows itself decides whether two folders are the same.
 
 `Ctrl / Alt / Shift / Win` are the universal escape hatch: with any modifier held the click
-is passed straight to Explorer.
+is passed straight to Explorer, so the folder opens in its own window.
+
+## One window, many tabs
+
+The default is strict: **one File Explorer window**. Whatever makes a folder appear — a
+double-click, the desktop, Start, the taskbar, Win+E, a shortcut in another app, a
+`WinExplorer.exe --open` call — it lands as a tab in the window you already have. Windows
+that appear anyway (this PC, an app that insists on its own window, a window you left open
+before starting WinExplorer) are folded in within a second or two, their tabs moved over and
+the empty window closed.
+
+Two gestures always beat that rule and produce a separate window that WinExplorer leaves
+alone from then on:
+
+- **Shift+double-click** a folder (any modifier key does it),
+- right-click a folder → **Open in new window**.
+
+Switched off: **Keep a single File Explorer window** in the settings window. **Also fold
+windows that are already open** keeps the fold-in of existing windows while new ones are
+handled as before. **Collect windows into one** in the tray menu performs one pass by hand,
+even while the automatic switches are off.
 
 ## Requirements
 
@@ -220,6 +241,8 @@ there is no Save button.
 | **Look for an already open copy in every Explorer window** | Off = only the target window is searched for duplicates. |
 | **Open new tabs in** | The window you are using, the last window you used, or the window with the most tabs. |
 | **Bring the new tab to the front** | Off = tabs are created in the background. |
+| **Keep a single File Explorer window** | The main switch: every folder becomes a tab in the one window, and extra windows are folded in. Shift+double-click / *Open in new window* still make real windows. |
+| **Also fold windows that are already open** | Collects the windows that were open before WinExplorer started (or that you deliberately kept). |
 | **Fold other new Explorer windows into tabs** | Catches folders opened from the desktop, Start, Win+E or other apps. |
 | **Keep virtual folders as windows** | This PC, Recycle Bin, Control Panel, … stay windows. |
 | **Use Win+E to open a tab** | Replaces the Win+E shortcut. |
@@ -249,6 +272,7 @@ WinExplorer.exe --settings               Show the window of the running instance
 WinExplorer.exe --install-context-menu   Add the right-click entries (per user)
 WinExplorer.exe --uninstall-context-menu Remove them and restore the old handler
 WinExplorer.exe --install-startup | --uninstall-startup | --toggle-startup
+WinExplorer.exe --single-window         Fold every Explorer window into one tabbed window
 WinExplorer.exe --restart                Restart the helper (recovers a hung copy)
 WinExplorer.exe --diagnose               Write a diagnostics report and open it
 WinExplorer.exe --log                    Open the log file
@@ -283,10 +307,13 @@ All three can be changed in the **Shortcuts** tab.
 - **A folder still opens in a window** — either WinExplorer is paused (check the tray icon
   and the header of the settings window), the folder is on the exclusion list, a modifier
   key was held, or the folder is a virtual location (search results, an archive, a phone).
-  With **Fold other new Explorer windows into tabs** switched on, such windows are folded in
-  a moment later.
-- **"Open in new window" opens a tab instead** — *Fold other new Explorer windows into tabs*
-  is on. Hold `Ctrl+Shift` while opening, or turn the option off.
+  With **Keep a single File Explorer window** on, such a window is folded in a moment later.
+- **"Open in new window" opens a tab instead** — there is a window *and* a folder open
+  somewhere, so the new window is folded in. Use `Shift+double-click` or turn **Keep a single
+  File Explorer window** off.
+- **Two windows remain and never merge** — one of them was opened with `Shift+double-click`
+  or *Open in new window*, so it is pinned on purpose. Close it (or drag its tabs where you
+  want them) and the next folder opens in the remaining window.
 - **Tabs do not work at all** — tabs need Windows 11 22H2+. On older builds folders fall
   back to windows and the log says so.
 - **`Install.cmd` says "No WinExplorer.exe was found"** — you are in the source code ZIP,

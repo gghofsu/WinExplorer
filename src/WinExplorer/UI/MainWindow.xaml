@@ -122,12 +122,24 @@
 
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Text="Other ways windows appear" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="One window, many tabs" Style="{StaticResource SectionTitle}" />
+
+                                <CheckBox Content="Keep a single File Explorer window"
+                                          IsChecked="{Binding SingleWindowMode, Mode=TwoWay}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,8"
+                                           Text="Every folder opens as a tab in the window you already have, including folders opened from the desktop, Start, Win+E or another app. Extra Explorer windows are folded in, so only one window is left." />
+
+                                <CheckBox Content="Also fold windows that are already open"
+                                          Margin="27,0,0,0"
+                                          IsChecked="{Binding MergeExistingWindows, Mode=TwoWay}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="54,0,0,8"
+                                           Text="Collects the windows you already have into tabs (also available as &quot;Collect windows into one&quot; in the tray menu)." />
 
                                 <CheckBox Content="Fold other new Explorer windows into tabs"
+                                          Margin="27,0,0,0"
                                           IsChecked="{Binding MergeNewWindows, Mode=TwoWay}" />
-                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,8"
-                                           Text="Catches folders opened from the desktop, Start, another app or Win+E. Right after a right-click the window is left alone, so &quot;Open in new window&quot; still works; hold Ctrl+Shift to force a window." />
+                                <TextBlock Style="{StaticResource Caption}" Margin="54,0,0,8"
+                                           Text="Catches folders opened from the desktop, Start, another app or Win+E. To open a real window on purpose: Shift+double-click a folder, or right-click it and choose &quot;Open in new window&quot;. Those windows are left alone." />
 
                                 <CheckBox Content="Keep virtual folders (This PC, Recycle Bin, …) as windows"
                                           IsChecked="{Binding KeepVirtualFoldersAsWindows, Mode=TwoWay}" />
