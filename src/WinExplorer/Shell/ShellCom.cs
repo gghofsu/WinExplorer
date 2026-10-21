@@ -30,6 +30,9 @@ internal static class ShellCom
     /// <summary>How many windows the shell automation reported in the last query.</summary>
     public static int LastWindowCount { get; private set; }
 
+    /// <summary>True once a Shell.Application object was created on any thread.</summary>
+    public static bool ShellCreated { get; private set; }
+
     /// <summary>True when the shell automation itself works (it returned at least one entry).</summary>
     public static bool AutomationAnswered => LastWindowCount > 0;
 
@@ -59,6 +62,8 @@ internal static class ShellCom
             _shell = Activator.CreateInstance(type);
             if (_shell is null)
                 Note("Shell.Application could not be created.");
+            else
+                ShellCreated = true;
         }
         catch (Exception ex)
         {
@@ -158,9 +163,36 @@ internal static class ShellCom
             }
         }
 
+        if (result.Count == 0)
+        {
+            // The late-bound Shell.Application came back empty. The shell windows object
+            // behind it is usually still fine - go through its typed interface instead.
+            var fallback = ShellWindowsQuery.Query(out var fallbackError);
+            LastEngine = fallback.Count > 0 ? "ShellWindows" : "none";
+
+            if (fallback.Count > 0)
+            {
+                result = fallback;
+                LastWindowCount = fallback.Count;
+            }
+            else if (fallbackError.Length > 0)
+            {
+                LastError = LastError.Length == 0
+                    ? fallbackError
+                    : $"{LastError} / {fallbackError}";
+            }
+        }
+        else
+        {
+            LastEngine = "Shell.Application";
+        }
+
         _memo = (Environment.TickCount64, result);
         return result;
     }
+
+    /// <summary>Which automation engine produced the last answer (for --probe).</summary>
+    public static string LastEngine { get; private set; } = "none";
 
     /// <summary>Forgets the memo (after navigating a tab).</summary>
     public static void InvalidateMemo() => _memo = (0, new Dictionary<nint, ShellTabLocation>());
@@ -168,10 +200,11 @@ internal static class ShellCom
     /// <summary>State of the shell automation, for --diagnose / --probe.</summary>
     public static string Describe()
     {
-        var shell = _shell is null ? "not created" : "cached";
-        var answer = AutomationAnswered ? "answered" : "no data";
+        var shell = ShellCreated ? "created" : "not created";
+        var answer = AutomationAnswered ? $"answered via {LastEngine}" : "no data";
         var error = LastError.Length == 0 ? "(none)" : LastError;
-        return $"shell automation: {shell}, {answer}, {LastWindowCount} window(s), last error {error}";
+        var property = LastPropertyError.Length == 0 ? string.Empty : $", last failing call {LastPropertyError}";
+        return $"shell automation: {shell}, {answer}, {LastWindowCount} window(s), last error {error}{property}";
     }
 
     /// <summary>Location of a single tab; empty when the shell does not know it yet.</summary>
@@ -185,7 +218,7 @@ internal static class ShellCom
             return entry.Location;
 
         // The automation server did not know this tab; ask the tab's own UI instead.
-        return AddressBarText.TryRead(tabHwnd);
+        return AddressBarText.TryRead(tabHwnd) ?? UiaAddressBar.TryRead(tabHwnd);
     }
 
     /// <summary>Location of the tab that currently has focus in <paramref name="windowHwnd"/>.</summary>
@@ -211,7 +244,14 @@ internal static class ShellCom
         if (activeTab != 0 && AddressBarText.TryRead(activeTab) is { Length: > 0 } fromTab)
             return fromTab;
 
-        return AddressBarText.TryRead(windowHwnd);
+        if (AddressBarText.TryRead(windowHwnd) is { Length: > 0 } fromWindow)
+            return fromWindow;
+
+        // Third opinion: UI Automation of the same window.
+        if (activeTab != 0 && UiaAddressBar.TryRead(activeTab) is { Length: > 0 } fromTabUia)
+            return fromTabUia;
+
+        return UiaAddressBar.TryRead(windowHwnd);
     }
 
     /// <summary>
@@ -389,11 +429,21 @@ internal static class ShellCom
             return instance.GetType().InvokeMember(property, System.Reflection.BindingFlags.GetProperty,
                 null, instance, null);
         }
-        catch
+        catch (Exception ex)
         {
+            // Late binding hides the reason; keep it, it is the only clue there is.
+            var actual = ex is System.Reflection.TargetInvocationException { InnerException: { } inner }
+                ? inner
+                : ex;
+
+            NoteException(property, actual);
+            LastPropertyError = $"{property}: 0x{actual.HResult:X8} {actual.Message}";
             return null;
         }
     }
+
+    /// <summary>The last property/method that failed on the automation object (for --probe).</summary>
+    public static string LastPropertyError { get; private set; } = string.Empty;
 
     private static object? Invoke(object? instance, string method, params object?[] args)
     {
@@ -405,8 +455,13 @@ internal static class ShellCom
             return instance.GetType().InvokeMember(method, System.Reflection.BindingFlags.InvokeMethod,
                 null, instance, args);
         }
-        catch
+        catch (Exception ex)
         {
+            if (ex is System.Reflection.TargetInvocationException { InnerException: { } inner })
+                NoteException(method, inner);
+            else
+                NoteException(method, ex);
+
             return null;
         }
     }

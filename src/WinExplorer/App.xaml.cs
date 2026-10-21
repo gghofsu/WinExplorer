@@ -731,12 +731,23 @@ public partial class App : Application
                     {
                         var location = tabs.GetTabLocationAsync(tab).GetAwaiter().GetResult();
                         builder.AppendLine($"    tab 0x{tab:X}  {location ?? "(no folder reported)"}");
+
+                        // Each engine on its own, so a report says exactly which one is blind.
+                        builder.AppendLine($"      MSAA : {WinExplorer.Shell.AddressBarText.TryRead(tab) ?? "(nothing)"}");
+                        builder.AppendLine($"      UIA  : {WinExplorer.Shell.UiaAddressBar.TryRead(tab, maxAgeMs: 0) ?? "(nothing)"}");
+                        builder.AppendLine($"      IESW : {WinExplorer.Shell.ShellWindowsQuery.ProbePropertyErrors(tab)}");
                     }
                 }
 
                 builder.AppendLine();
                 builder.AppendLine("Shell automation");
                 builder.AppendLine("  " + WinExplorer.Shell.ShellCom.Describe());
+
+                var direct = WinExplorer.Shell.ShellWindowsQuery.Query(out var directError);
+                builder.AppendLine($"  IShellWindows direct: {direct.Count} entr(y/ies)" +
+                                   (directError.Length == 0 ? string.Empty : $", {directError}"));
+                foreach (var (hwnd, entry) in direct)
+                    builder.AppendLine($"    0x{hwnd:X}  window 0x{entry.WindowHwnd:X}  '{entry.Location}'");
             }
             finally
             {

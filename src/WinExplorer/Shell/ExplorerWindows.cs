@@ -130,7 +130,9 @@ internal static class ExplorerWindows
                 // When the automation server knows nothing, the active tab can still tell us
                 // its folder through its own address bar.
                 if (string.IsNullOrEmpty(location) && i == 0)
-                    location = AddressBarText.TryRead(tabHwnd) ?? string.Empty;
+                    location = AddressBarText.TryRead(tabHwnd)
+                               ?? UiaAddressBar.TryRead(tabHwnd)
+                               ?? string.Empty;
                 var name = map.TryGetValue(tabHwnd, out var entry2) && !string.IsNullOrEmpty(entry2.DisplayName)
                     ? entry2.DisplayName
                     : PathNormalizer.ToDisplayName(location);
