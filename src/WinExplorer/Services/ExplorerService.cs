@@ -387,8 +387,9 @@ internal sealed class ExplorerService : IDisposable
         }
 
         // A context menu stays open until the user picks an item, which can take a while;
-        // be generous so "Open in new window" is never folded back into a tab.
-        if (MouseHook.RightButtonReleasedRecently(6000))
+        // be generous so "Open in new window" is never folded back into a tab. The window is
+        // pinned, so a merge skipped by mistake costs one extra window, not a lost tab.
+        if (MouseHook.RightButtonReleasedRecently(15000))
         {
             reason = "right-click / Open in new window";
             Pin(window);

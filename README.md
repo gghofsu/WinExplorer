@@ -88,7 +88,8 @@ Two gestures always beat that rule and produce a separate window that WinExplore
 alone from then on:
 
 - **Shift+double-click** a folder (holding Ctrl, Alt or Win works too),
-- right-click a folder → **Open in new window**.
+- right-click a folder → **Open in new window** (the context menu may stay open for a while;
+  a window that appears within 15 s of a right-click is always treated as deliberate).
 
 Switched off: **Keep a single File Explorer window** in the settings window. **Also fold
 windows that are already open** keeps the fold-in of existing windows while new ones are
