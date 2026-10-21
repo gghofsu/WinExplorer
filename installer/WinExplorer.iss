@@ -119,6 +119,7 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   DataDir: string;
+  Prompt: string;
 begin
   { Settings live outside {app}, so they survive an uninstall unless the user says
     otherwise. Ask once, after the program files are gone. }
@@ -127,8 +128,9 @@ begin
     DataDir := ExpandConstant('{userappdata}\WinExplorer');
     if DirExists(DataDir) and not UninstallSilent then
     begin
-      if MsgBox('Do you also want to delete your WinExplorer settings and log?' +
-                #13#10 + #13#10 + DataDir, mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+      Prompt := 'Do you also want to delete your WinExplorer settings and log?';
+      Prompt := Prompt + #13#10 + #13#10 + DataDir;
+      if MsgBox(Prompt, mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
         DelTree(DataDir, True, True, True);
     end;
   end;
