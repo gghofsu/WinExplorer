@@ -610,7 +610,8 @@ internal sealed class ExplorerService : IDisposable
             var active = await _tabs.GetActiveLocationAsync(window, cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrEmpty(active))
             {
-                _log.Debug($"Consolidation postponed for 0x{window:X}: it reports no folder yet.");
+                // Visible, but at most once a minute per window (see BackOff).
+                BackOff(window, "no folder could be read for its tab (run --probe).");
                 return false;
             }
 
@@ -642,7 +643,7 @@ internal sealed class ExplorerService : IDisposable
 
             if (locations.Count == 0 || tabs.Count > 1)
             {
-                _log.Debug($"Consolidation postponed for 0x{window:X}: its tabs are not readable yet.");
+                BackOff(window, "its tabs report no folder (run --probe).");
                 return false;
             }
         }
@@ -652,7 +653,7 @@ internal sealed class ExplorerService : IDisposable
         if (locations.Any(settings.IsExcluded) ||
             (settings.KeepVirtualFoldersAsWindows && locations.Any(PathNormalizer.IsShellNamespace)))
         {
-            _log.Debug($"Consolidation skipped 0x{window:X}: a folder in it keeps normal Windows behaviour.");
+            BackOff(window, "a folder in it keeps normal Windows behaviour (excluded or virtual).");
             return false;
         }
 

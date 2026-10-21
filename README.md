@@ -334,10 +334,11 @@ All three can be changed in the **Shortcuts** tab.
   kept (`kept as a window: ...`); `--diagnose` shows the last lines.
 - **A window appears and then turns into a tab** — that is the fold-in working: Windows had
   already drawn the window. `--single-window` or the tray item does the same thing by hand.
-- **Nothing is folded and the log says "never reported a folder" / "not readable yet"** —
-  the shell is not telling the app which folder a tab shows. Run `--probe`: it lists every
-  window and tab *with* the folder the app managed to read, plus the state of the shell
-  automation (`no data` means the automation server itself is refusing). Send that report.
+- **Nothing is folded and the log says "no folder could be read"** — the shell is not
+  telling the app which folder a tab shows. Run `--probe`: it lists every window and tab
+  *with* the folder the app managed to read, and for each tab what the three readers see
+  (`MSAA`, `UIA`, `IESW` — the address bar, UI Automation, and the `ShellWindows` object).
+  Whichever line has a path is the engine that works on that machine.
 - **Nothing is folded at all** — look for `Explorer did not create a tab` in the log. Windows
   11 22H2+ is required; on older builds the app cannot create tabs and every folder falls
   back to a window (which is also what the tab lookups need). `--restart` reloads the helper
