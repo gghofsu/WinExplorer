@@ -150,6 +150,28 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
 - [ ] Restart Explorer (`explorer.exe` kill) → WinExplorer keeps running and tabs work again
       afterwards.
 
+### Recovery and diagnostics
+
+- [ ] Start WinExplorer, then start it again → the existing window comes forward, no second
+      tray icon, no error dialog.
+- [ ] Freeze the helper (Task Manager → *Suspend* on WinExplorer.exe) and start the app
+      again → the dialog offers to restart; answering **Yes** stops the frozen copy, starts
+      a fresh one and the settings window opens. The log records the takeover.
+- [ ] Same with *Suspend*: tray menu → *Restart WinExplorer* recovers it.
+- [ ] `WinExplorer.exe --restart` from a console recovers a suspended copy.
+- [ ] `WinExplorer.exe --exit` while the helper is suspended returns within a few seconds
+      (it must not hang behind a dialog).
+- [ ] Running `Install.cmd` or `Uninstall.cmd` while the helper is suspended completes; the
+      installer force-stops the copy after a few seconds instead of waiting forever.
+- [ ] `WinExplorer.exe --diagnose` writes `%APPDATA%\WinExplorer\WinExplorer-diagnose.txt`,
+      opens it, and the report shows the mutex owner, the pipe answer (or the reason it did
+      not answer), the running processes and the log tail.
+- [ ] Kill the helper's process while it holds the mutex → starting the app again works
+      (takeover path, "no other WinExplorer process is alive").
+- [ ] Simulate a helper failure: rename `%APPDATA%\WinExplorer` to a read-only folder and
+      start the app → it reports that it could not start and does not stay running hidden
+      (the next start is clean).
+
 ### Edge cases
 
 - [ ] A folder whose name contains `#`, `%`, `&`, or non-ASCII characters.

@@ -20,6 +20,8 @@ public enum CommandKind
     InstallStartup,
     UninstallStartup,
     ToggleStartup,
+    Restart,
+    Diagnose,
     ShowLog,
     Help,
     Version
@@ -225,6 +227,19 @@ public static class CommandLine
                     SetKind(CommandKind.ToggleStartup);
                     break;
 
+                case "restart":
+                case "--restart":
+                case "-restart":
+                    SetKind(CommandKind.Restart);
+                    break;
+
+                case "diagnose":
+                case "--diagnose":
+                case "--doctor":
+                case "-diagnose":
+                    SetKind(CommandKind.Diagnose);
+                    break;
+
                 case "log":
                 case "--log":
                     SetKind(CommandKind.ShowLog);
@@ -296,6 +311,8 @@ public static class CommandLine
           WinExplorer.exe --pause | --resume | --toggle
           WinExplorer.exe --install-context-menu | --uninstall-context-menu
           WinExplorer.exe --install-startup | --uninstall-startup | --toggle-startup
+          WinExplorer.exe --restart              Restart the helper (recovers a stuck copy)
+          WinExplorer.exe --diagnose             Write a diagnostics report and open it
           WinExplorer.exe --exit
         """;
 }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using WinExplorer.Core;
@@ -69,46 +70,109 @@ public partial class App : Application
                 RunLocalCommand(options);
                 Shutdown(0);
                 return;
+
+            case CommandKind.Diagnose:
+                RunDiagnostics();
+                Shutdown(0);
+                return;
         }
 
-        _instanceMutex = new Mutex(true, AppPaths.MutexName, out var createdNew);
-        _ownsInstance = createdNew;
-
-        if (!_ownsInstance)
+        if (options.Kind == CommandKind.Restart)
         {
-            // Another WinExplorer owns the hooks: forward the request and exit.
-            ForwardToRunningInstance(options);
+            // Replace the running copy instead of asking it to do something.
+            RunRestart(options);
             return;
         }
 
-        StartHost(options);
+        if (TryAcquireInstance(TimeSpan.Zero))
+        {
+            StartHost(options);
+            return;
+        }
+
+        // Another WinExplorer owns the hooks: forward the request and exit.
+        ForwardToRunningInstance(options);
     }
 
     /// <summary>Starts the background helper, the tray icon and optionally the window.</summary>
+    /// <remarks>
+    /// Every stage is isolated: if one part fails (a hook, the tray icon) the process must
+    /// still answer on the IPC pipe, otherwise a half-started copy holds the single-instance
+    /// mutex and every later launch only sees "already running but did not answer".
+    /// </remarks>
     private void StartHost(CommandLineOptions options)
     {
-        _runtime = new AppRuntime(_log!, _store!);
-        _runtime.Activity += (_, message) =>
+        _log!.Info($"Startup stage 1/4: this process owns the instance (pid {Environment.ProcessId}).");
+
+        // The pipe comes first so the instance is reachable from the very beginning.
+        try
         {
-            if (!Settings.ShowNotifications)
-                return;
-            Dispatcher.BeginInvoke(() => _tray?.ShowBalloon(message));
-        };
-        _runtime.SettingsChanged += (_, settings) => Dispatcher.BeginInvoke(() =>
+            _ipc = new IpcServer(_log, HandleIpcAsync);
+            _ipc.Start();
+            _log.Info("Startup stage 1/4: IPC server listening.");
+        }
+        catch (Exception ex)
         {
-            _tray?.UpdateState(settings.Enabled);
-            _tray?.UpdateStartupState(settings.StartWithWindows);
-            _viewModel?.RefreshFromSettings();
-        });
+            _log.Error("The IPC server could not start", ex);
+        }
 
-        _runtime.Start();
-        _tray = CreateTrayIcon();
-        _tray.UpdateState(Settings.Enabled);
+        try
+        {
+            _runtime = new AppRuntime(_log, _store!);
+            _runtime.Activity += (_, message) =>
+            {
+                if (!Settings.ShowNotifications)
+                    return;
+                Dispatcher.BeginInvoke(() => _tray?.ShowBalloon(message));
+            };
+            _runtime.SettingsChanged += (_, settings) => Dispatcher.BeginInvoke(() =>
+            {
+                _tray?.UpdateState(settings.Enabled);
+                _tray?.UpdateStartupState(settings.StartWithWindows);
+                _viewModel?.RefreshFromSettings();
+            });
 
-        _ipc = new IpcServer(_log!, HandleIpcAsync);
-        _ipc.Start();
+            _runtime.Start();
+            _log.Info("Startup stage 2/4: background helper started.");
+        }
+        catch (Exception ex)
+        {
+            _log.Error("The background helper could not start", ex);
+            _runtime?.Dispose();
+            _runtime = null;
 
-        SyncIntegrationState();
+            // Without the helper there is nothing useful to keep running; letting the process
+            // die frees the mutex so the next launch is clean.
+            MessageBox.Show(
+                "WinExplorer could not start.\n\n" + ex.Message +
+                $"\n\nDetails were written to:\n{AppPaths.LogFile}",
+                "WinExplorer", MessageBoxButton.OK, MessageBoxImage.Error);
+            ExitApplication();
+            return;
+        }
+
+        try
+        {
+            _tray = CreateTrayIcon();
+            _tray.UpdateState(Settings.Enabled);
+            _log.Info("Startup stage 3/4: tray icon ready.");
+        }
+        catch (Exception ex)
+        {
+            _log.Error("The notification area icon could not be created", ex);
+            _tray = null;
+        }
+
+        try
+        {
+            SyncIntegrationState();
+        }
+        catch (Exception ex)
+        {
+            _log.Error("The Windows integration could not be synchronised", ex);
+        }
+
+        _log.Info("Startup stage 4/4: ready.");
 
         if (options.Kind == CommandKind.Exit)
         {
@@ -128,7 +192,7 @@ public partial class App : Application
 
             _ = Task.Run(async () =>
             {
-                var response = await _runtime.HandleIpcAsync(IpcClient.FromCommand(options, mode)).ConfigureAwait(false);
+                var response = await _runtime!.HandleIpcAsync(IpcClient.FromCommand(options, mode)).ConfigureAwait(false);
                 if (!response.Ok)
                     _log!.Warn($"Open request failed: {response.Message}");
             });
@@ -176,6 +240,7 @@ public partial class App : Application
         duplicateTab: () => _ = _runtime!.DuplicateActiveTabAsync(),
         reopenClosed: () => _ = _runtime!.ReopenLastClosedAsync(),
         openLog: OpenLog,
+        restart: Restart,
         exit: () => Dispatcher.BeginInvoke(ExitApplication));
 
     /// <summary>Adds or removes the "start when I sign in" entry from the tray menu.</summary>
@@ -302,18 +367,69 @@ public partial class App : Application
 
     private async Task<IpcResponse> HandleIpcAsync(IpcRequest request)
     {
+        // "ping" is answered from the IPC thread, so a busy (or stuck) UI thread still shows
+        // up as "running" instead of looking dead.
         switch (request.Kind)
         {
+            case "ping":
+                return new IpcResponse
+                {
+                    Ok = true,
+                    Outcome = _runtime is null ? "pong (helper unavailable)" : "pong",
+                    Message = $"pid {Environment.ProcessId}"
+                };
+
             case "settings":
-                await Dispatcher.InvokeAsync(ShowSettingsWindow, DispatcherPriority.Normal);
-                return new IpcResponse { Ok = true, Outcome = "shown" };
+            {
+                var shown = await RunOnUiThreadAsync(ShowSettingsWindow,
+                    Math.Min(request.TimeoutMs, 10000)).ConfigureAwait(false);
+                return shown
+                    ? new IpcResponse { Ok = true, Outcome = "shown", Message = $"pid {Environment.ProcessId}" }
+                    : new IpcResponse { Ok = false, Message = "The settings window did not open in time." };
+            }
 
             case "exit":
-                await Dispatcher.InvokeAsync(ExitApplication, DispatcherPriority.Normal);
+            {
+                var exiting = await RunOnUiThreadAsync(ExitApplication, 2000).ConfigureAwait(false);
+                if (!exiting)
+                {
+                    _log?.Warn("The UI thread did not shut down in time; ending the process.");
+                    Environment.Exit(0);
+                }
+
                 return new IpcResponse { Ok = true, Outcome = "exiting" };
+            }
 
             default:
-                return await _runtime!.HandleIpcAsync(request).ConfigureAwait(false);
+                if (_runtime is null)
+                    return new IpcResponse { Ok = false, Message = "The background helper is not running." };
+
+                return await _runtime.HandleIpcAsync(request).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Runs an action on the UI thread and reports whether it finished in time.</summary>
+    private async Task<bool> RunOnUiThreadAsync(Action action, int timeoutMs)
+    {
+        try
+        {
+            if (Dispatcher.HasShutdownStarted)
+                return false;
+
+            var operation = Dispatcher.InvokeAsync(action, DispatcherPriority.Send);
+            var finished = await Task.WhenAny(operation.Task, Task.Delay(Math.Max(250, timeoutMs)))
+                .ConfigureAwait(false);
+
+            if (finished != operation.Task)
+                return false;
+
+            await operation.Task.ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log?.Error("A UI action failed", ex);
+            return false;
         }
     }
 
@@ -322,6 +438,7 @@ public partial class App : Application
     {
         _ = Task.Run(async () =>
         {
+            IpcAttempt attempt = new(null, "not tried");
             var request = IpcClient.FromCommand(options, options.Kind switch
             {
                 CommandKind.OpenNewTab => "newtab",
@@ -329,27 +446,53 @@ public partial class App : Application
                 _ => null
             });
 
-            IpcResponse? response = null;
-            for (var attempt = 0; attempt < 6 && response is null; attempt++)
-            {
-                response = await IpcClient.SendAsync(request, 1500).ConfigureAwait(false);
-                if (response is null)
-                    await Task.Delay(300).ConfigureAwait(false);
-            }
+            _log?.Info($"Another instance owns the single-instance mutex; forwarding '{options.Kind}'.");
 
-            if (response is null)
+            // An installer or uninstaller asks for --exit and waits for us; never block it
+            // behind a dialog or a long timeout.
+            if (options.Kind == CommandKind.Exit)
+                await SendWithRetriesAsync(request, deadlineMs: 4000).ConfigureAwait(false);
+            else
+                attempt = await SendWithRetriesAsync(request).ConfigureAwait(false);
+
+            if (options.Kind == CommandKind.Exit)
             {
-                _log?.Warn("The running instance did not answer; falling back to a local action.");
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    MessageBox.Show(
-                        "WinExplorer is already running but did not answer. Try again, or exit it from the notification area.",
-                        "WinExplorer", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    ExitApplication();
-                });
+                await Dispatcher.InvokeAsync(ExitApplication);
                 return;
             }
 
+            if (!attempt.Answered)
+            {
+                _log?.Warn($"The running instance did not answer: {attempt.Error}");
+
+                // Nothing is listening although we do not own the instance: either a copy is
+                // still starting up (single-file extraction is slow) or it is wedged. Take
+                // over when it is gone, ask before replacing a wedged copy.
+                if (WinExplorerProcesses.Others().Count == 0)
+                {
+                    _log?.Info("No other WinExplorer process is alive; taking over.");
+                    await Dispatcher.InvokeAsync(() => TakeOver(options));
+                    return;
+                }
+
+                var restart = await Dispatcher.InvokeAsync(() => MessageBox.Show(
+                    "WinExplorer is already running but is not responding.\n\n" +
+                    "Restart it? This closes the unresponsive copy and starts a fresh one. " +
+                    "Your settings are kept.",
+                    "WinExplorer", MessageBoxButton.YesNo, MessageBoxImage.Warning,
+                    MessageBoxResult.Yes));
+
+                if (restart == MessageBoxResult.Yes)
+                {
+                    await Dispatcher.InvokeAsync(() => TakeOver(options));
+                    return;
+                }
+
+                await Dispatcher.InvokeAsync(ExitApplication);
+                return;
+            }
+
+            var response = attempt.Response!;
             if (!response.Ok)
             {
                 _log?.Warn($"Running instance refused the request: {response.Message}");
@@ -357,9 +500,184 @@ public partial class App : Application
                     $"WinExplorer could not open the folder.\n\n{response.Message}",
                     "WinExplorer", MessageBoxButton.OK, MessageBoxImage.Warning));
             }
+            else if (options.Kind is CommandKind.None or CommandKind.Settings)
+            {
+                _log?.Info($"The running instance answered: {response.Outcome}");
+            }
 
             await Dispatcher.InvokeAsync(ExitApplication);
         });
+    }
+
+    /// <summary>
+    /// Keeps asking the running instance for a while: while a helper is starting up (or while
+    /// Windows is busy extracting a single-file build) the pipe simply does not exist yet.
+    /// Short connect timeouts make the polling cheap; the generous response timeout covers a
+    /// helper whose UI thread is busy.
+    /// </summary>
+    private async Task<IpcAttempt> SendWithRetriesAsync(IpcRequest request, int deadlineMs = 15000)
+    {
+        var started = Environment.TickCount64;
+        var deadline = started + deadlineMs;
+        var announced = false;
+        IpcAttempt attempt = new(null, "not tried yet");
+
+        while (Environment.TickCount64 < deadline)
+        {
+            attempt = await IpcClient.TrySendAsync(request, connectTimeoutMs: 400,
+                responseTimeoutMs: Math.Max(3000, request.TimeoutMs)).ConfigureAwait(false);
+
+            if (attempt.Answered)
+            {
+                _log?.Info($"The running instance answered after {Environment.TickCount64 - started} ms.");
+                return attempt;
+            }
+
+            _log?.Debug($"Waiting for the running instance: {attempt.Error}");
+
+            if (!announced && Environment.TickCount64 - started > 3000)
+            {
+                announced = true;
+                _log?.Info($"Still waiting for the running instance ({attempt.Error})...");
+            }
+
+            await Task.Delay(350).ConfigureAwait(false);
+        }
+
+        return attempt;
+    }
+
+    /// <summary>Replaces a wedged copy of WinExplorer with this process.</summary>
+    private void TakeOver(CommandLineOptions options)
+    {
+        if (IsExiting)
+            return;
+
+        var stopped = WinExplorerProcesses.TerminateOthers(_log);
+        if (stopped > 0)
+            _log?.Info($"Stopped {stopped} unresponsive WinExplorer process(es).");
+
+        if (!TryAcquireInstance(TimeSpan.FromSeconds(5)))
+        {
+            _log?.Warn("The single-instance mutex could not be acquired after a restart.");
+            MessageBox.Show(
+                "WinExplorer could not take over because another copy is still running.\n\n" +
+                "Sign out and back in, or end WinExplorer in Task Manager, then start it again.",
+                "WinExplorer", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ExitApplication();
+            return;
+        }
+
+        _log?.Info("Took over as the primary instance.");
+        StartHost(options.Kind == CommandKind.Restart ? options with { Kind = CommandKind.None } : options);
+    }
+
+    /// <summary>Creates (and owns) the single-instance mutex, waiting for a dying copy if needed.</summary>
+    private bool TryAcquireInstance(TimeSpan timeout)
+    {
+        var deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
+
+        while (true)
+        {
+            try
+            {
+                _instanceMutex?.Dispose();
+                _instanceMutex = new Mutex(true, AppPaths.MutexName, out var createdNew);
+                _ownsInstance = createdNew;
+
+                if (createdNew)
+                    return true;
+            }
+            catch (Exception ex)
+            {
+                _log?.Warn($"The single-instance mutex could not be opened: {ex.Message}");
+            }
+
+            if (Environment.TickCount64 >= deadline)
+                return false;
+
+            Thread.Sleep(200);
+        }
+    }
+
+    /// <summary>
+    /// <c>--restart</c>: ask the running copy to exit, wait for it, and start a fresh helper.
+    /// This is the supported way out of "already running but did not answer".
+    /// </summary>
+    private void RunRestart(CommandLineOptions options)
+    {
+        _ = Task.Run(async () =>
+        {
+            _log?.Info("Restart requested.");
+
+            var exit = await IpcClient.TrySendAsync(
+                new IpcRequest { Kind = "exit", TimeoutMs = 3000 },
+                connectTimeoutMs: 500, responseTimeoutMs: 4000).ConfigureAwait(false);
+
+            if (exit.Answered)
+                _log?.Info("The running instance is exiting.");
+
+            if (!TryAcquireInstance(TimeSpan.FromSeconds(6)))
+            {
+                var stopped = WinExplorerProcesses.TerminateOthers(_log);
+                _log?.Info($"Stopped {stopped} WinExplorer process(es) that did not exit.");
+                TryAcquireInstance(TimeSpan.FromSeconds(4));
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (_ownsInstance)
+                {
+                    StartHost(options with { Kind = CommandKind.None });
+                    return;
+                }
+
+                MessageBox.Show(
+                    "WinExplorer could not restart because another copy is still running.\n\n" +
+                    "End it in Task Manager and start WinExplorer again.",
+                    "WinExplorer", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ExitApplication();
+            });
+        });
+    }
+
+    /// <summary>Restart from the tray menu: launch a fresh process that takes over.</summary>
+    public void Restart()
+    {
+        _log?.Info("Restarting WinExplorer.");
+        try
+        {
+            Process.Start(new ProcessStartInfo(AppPaths.ExecutablePath, "--restart")
+            {
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(AppPaths.ExecutablePath) ?? Environment.CurrentDirectory
+            })?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            _log?.Error("Could not start the replacement process", ex);
+            MessageBox.Show(
+                $"WinExplorer could not restart.\n\n{ex.Message}",
+                "WinExplorer", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        ExitApplication();
+    }
+
+    /// <summary><c>--diagnose</c>: writes a report next to the settings and opens it.</summary>
+    private void RunDiagnostics()
+    {
+        try
+        {
+            var path = Diagnostics.Write(_log!, _store!);
+            ConsoleHelper.WriteLine($"Diagnostics written to {path}");
+            Diagnostics.Open(path);
+        }
+        catch (Exception ex)
+        {
+            ConsoleHelper.WriteLine($"The diagnostics report could not be written: {ex.Message}");
+        }
     }
 
     // ------------------------------------------------------------------
@@ -371,23 +689,47 @@ public partial class App : Application
         if (_runtime is null)
             return;
 
-        if (_window is null)
+        try
         {
-            _viewModel = new MainViewModel(_runtime);
-            _window = new MainWindow(this, _viewModel);
-            _window.Closed += (_, _) => _window = null;
+            if (_window is null)
+            {
+                _viewModel = new MainViewModel(_runtime);
+                _window = new MainWindow(this, _viewModel);
+                _window.Closed += (_, _) => _window = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            // A broken window must not take the tray icon and the hooks with it.
+            _log?.Error("The settings window could not be created", ex);
+            _window = null;
+            MessageBox.Show(
+                $"The WinExplorer settings window could not be opened.\n\n{ex.Message}\n\n" +
+                $"WinExplorer keeps running in the notification area.\nDetails: {AppPaths.LogFile}",
+                "WinExplorer", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
         }
 
-        if (!_window.IsVisible)
-            _window.Show();
+        if (_window is null)
+            return;
 
-        if (_window.WindowState == WindowState.Minimized)
-            _window.WindowState = WindowState.Normal;
+        try
+        {
+            if (!_window.IsVisible)
+                _window.Show();
 
-        _window.Activate();
-        _window.Topmost = true;
-        _window.Topmost = false;
-        _window.Focus();
+            if (_window.WindowState == WindowState.Minimized)
+                _window.WindowState = WindowState.Normal;
+
+            _window.Activate();
+            _window.Topmost = true;
+            _window.Topmost = false;
+            _window.Focus();
+        }
+        catch (Exception ex)
+        {
+            _log?.Error("The settings window could not be shown", ex);
+        }
     }
 
     public void NotifyHiddenToTray()

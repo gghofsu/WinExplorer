@@ -14,7 +14,8 @@ internal sealed class TrayIcon : IDisposable
     private bool _disposed;
 
     public TrayIcon(Logger log, Func<bool> isStartupEnabled, Action openSettings, Action toggleEnabled,
-        Action toggleStartup, Action duplicateTab, Action reopenClosed, Action openLog, Action exit)
+        Action toggleStartup, Action duplicateTab, Action reopenClosed, Action openLog, Action restart,
+        Action exit)
     {
         _log = log;
 
@@ -47,6 +48,8 @@ internal sealed class TrayIcon : IDisposable
         menu.Items.Add(new ToolStripMenuItem("Reopen closed folder", null, (_, _) => reopenClosed()));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Open log file", null, (_, _) => openLog()));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(new ToolStripMenuItem("Restart WinExplorer", null, (_, _) => restart()));
         menu.Items.Add(new ToolStripMenuItem("Exit WinExplorer", null, (_, _) => exit()));
 
         _icon = new NotifyIcon

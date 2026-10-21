@@ -204,6 +204,8 @@ The startup entry can be added or removed at any time, without reinstalling:
 - Closing the settings window keeps WinExplorer running in the tray (configurable). Use
   *Exit WinExplorer* in the tray menu to stop it completely.
 - Tray menu → **Start with Windows** adds or removes the startup entry with one click.
+- Tray menu → **Restart WinExplorer** replaces the running copy, which is the way out of a
+  hung instance.
 
 ## Settings
 
@@ -247,6 +249,8 @@ WinExplorer.exe --settings               Show the window of the running instance
 WinExplorer.exe --install-context-menu   Add the right-click entries (per user)
 WinExplorer.exe --uninstall-context-menu Remove them and restore the old handler
 WinExplorer.exe --install-startup | --uninstall-startup | --toggle-startup
+WinExplorer.exe --restart                Restart the helper (recovers a hung copy)
+WinExplorer.exe --diagnose               Write a diagnostics report and open it
 WinExplorer.exe --log                    Open the log file
 WinExplorer.exe --exit                   Stop the helper
 WinExplorer.exe --version | --help
@@ -289,9 +293,19 @@ All three can be changed in the **Shortcuts** tab.
   which has no compiled program. Let the installer download a build (answer *yes* to the
   download question), install the .NET 8 SDK so it can build one, or run it from an unpacked
   release zip / CI artifact.
+- **"WinExplorer is already running but is not responding"** — a copy is wedged (a hook or
+  the tray icon failed, or the window never appeared). Answer **Yes** to the restart prompt:
+  the stuck copy is stopped and a fresh one takes over with your settings. The same thing is
+  available as tray menu → *Restart WinExplorer* and as `WinExplorer.exe --restart`.
+- **Something is off and the log is not enough** — run `WinExplorer.exe --diagnose`. It
+  writes `%APPDATA%\WinExplorer\WinExplorer-diagnose.txt` and opens it: version and paths,
+  whether the single-instance mutex is held, whether a running copy answers on the IPC pipe
+  (and how fast), every WinExplorer process with its start time, the active settings and the
+  last 80 log lines.
 - **Nothing happens at all** — make sure only one WinExplorer is running (tray icon), then
   check `%APPDATA%\WinExplorer\WinExplorer.log` (tray menu → *Open log file*). The log
-  records every tab command and every fallback with timestamps.
+  records every tab command and every fallback with timestamps, and now also each startup
+  stage, so the last line tells you where startup stopped.
 - **Explorer restarts** — WinExplorer re-attaches automatically; the log notes it.
 - **Undoing the integration** — switch the two Windows-integration checkboxes off, or run
   `WinExplorer.exe --uninstall-context-menu`.

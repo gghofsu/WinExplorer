@@ -476,20 +476,15 @@ function Stop-RunningApp([string]$ExePath) {
     # Ask nicely first so the tray icon, hooks and IPC server shut down cleanly.
     if (Test-Path $ExePath) {
         try {
-            $start = @{
-                FilePath = $ExePath
-                ArgumentList = '--exit'
-                Wait = $true
-                WindowStyle = 'Hidden'
-            }
-            Start-Process @start | Out-Null
+            # No -Wait: a wedged instance must not block the installer behind a dialog.
+            Start-Process -FilePath $ExePath -ArgumentList '--exit' -WindowStyle Hidden | Out-Null
         }
         catch {
             # ignored; the forced stop below handles it
         }
     }
 
-    for ($i = 0; $i -lt 20; $i++) {
+    for ($i = 0; $i -lt 25; $i++) {
         Start-Sleep -Milliseconds 200
         if (-not (Get-Process -Name $AppName -ErrorAction SilentlyContinue)) {
             return
