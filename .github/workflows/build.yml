@@ -6,6 +6,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      build_installer:
+        description: 'Also compile the Inno Setup installer'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -98,15 +103,33 @@ jobs:
             Copy-Item 'scripts/uninstall-app.ps1' "$dir/scripts" -Force
           }
 
+          foreach ($dir in @('publish/framework-dependent', 'publish/self-contained')) {
+            foreach ($file in @('Install.cmd', 'Uninstall.cmd', 'scripts/install-app.ps1', 'scripts/uninstall-app.ps1')) {
+              if (-not (Test-Path (Join-Path $dir $file))) { throw "$file is missing from $dir" }
+            }
+          }
+
           Compress-Archive -Path 'publish/framework-dependent/*' -DestinationPath "artifacts/WinExplorer-$version-win-x64.zip"
           Compress-Archive -Path 'publish/self-contained/*' -DestinationPath "artifacts/WinExplorer-$version-win-x64-selfcontained.zip"
 
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path "artifacts/WinExplorer-$version-win-x64.zip"))
+          try {
+            $names = $zip.Entries | ForEach-Object FullName
+            foreach ($file in @('Install.cmd', 'Uninstall.cmd', 'scripts/install-app.ps1', 'scripts/uninstall-app.ps1')) {
+              if ($names -notcontains $file) { throw "$file is missing from the release zip" }
+            }
+          }
+          finally {
+            $zip.Dispose()
+          }
+
       - name: Install Inno Setup
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.build_installer
         run: choco install innosetup --no-progress -y
 
       - name: Build installer
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.build_installer
         shell: pwsh
         run: |
           $version = (Get-Content src/WinExplorer/WinExplorer.csproj |
