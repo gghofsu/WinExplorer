@@ -121,8 +121,8 @@ var
   DataDir: string;
   Prompt: string;
 begin
-  { Settings live outside {app}, so they survive an uninstall unless the user says
-    otherwise. Ask once, after the program files are gone. }
+  { Settings live outside the program folder, so they survive an uninstall unless
+    the user says otherwise. Ask once, after the program files are gone. }
   if CurUninstallStep = usPostUninstall then
   begin
     DataDir := ExpandConstant('{userappdata}\WinExplorer');
