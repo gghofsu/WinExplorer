@@ -126,20 +126,39 @@
 
                                 <CheckBox Content="Keep a single File Explorer window"
                                           IsChecked="{Binding SingleWindowMode, Mode=TwoWay}" />
-                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,8"
-                                           Text="Every folder opens as a tab in the window you already have, including folders opened from the desktop, Start, Win+E or another app. Extra Explorer windows are folded in, so only one window is left." />
+                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,4"
+                                           Text="Every folder becomes a tab in the window you already have, and extra windows are folded in: from the desktop, Start, the taskbar, Win+E or another app. Shift+double-click a folder, or right-click it and choose &quot;Open in new window&quot;, to get a real window - that one is never folded back." />
+
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,6,0,4"
+                                           Text="The two switches below only matter while the single-window switch is off." />
 
                                 <CheckBox Content="Also fold windows that are already open"
                                           Margin="27,0,0,0"
-                                          IsChecked="{Binding MergeExistingWindows, Mode=TwoWay}" />
-                                <TextBlock Style="{StaticResource Caption}" Margin="54,0,0,8"
-                                           Text="Collects the windows you already have into tabs (also available as &quot;Collect windows into one&quot; in the tray menu)." />
+                                          IsChecked="{Binding MergeExistingWindows, Mode=TwoWay}">
+                                    <CheckBox.Style>
+                                        <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SingleWindowMode}" Value="True">
+                                                    <Setter Property="IsEnabled" Value="False" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </CheckBox.Style>
+                                </CheckBox>
 
                                 <CheckBox Content="Fold other new Explorer windows into tabs"
                                           Margin="27,0,0,0"
-                                          IsChecked="{Binding MergeNewWindows, Mode=TwoWay}" />
-                                <TextBlock Style="{StaticResource Caption}" Margin="54,0,0,8"
-                                           Text="Catches folders opened from the desktop, Start, another app or Win+E. To open a real window on purpose: Shift+double-click a folder, or right-click it and choose &quot;Open in new window&quot;. Those windows are left alone." />
+                                          IsChecked="{Binding MergeNewWindows, Mode=TwoWay}">
+                                    <CheckBox.Style>
+                                        <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SingleWindowMode}" Value="True">
+                                                    <Setter Property="IsEnabled" Value="False" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </CheckBox.Style>
+                                </CheckBox>
 
                                 <CheckBox Content="Keep virtual folders (This PC, Recycle Bin, …) as windows"
                                           IsChecked="{Binding KeepVirtualFoldersAsWindows, Mode=TwoWay}" />

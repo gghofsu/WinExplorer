@@ -73,6 +73,15 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
 - [ ] **Shift+double-click** a folder → a real second window appears and **stays** a window,
       even after a minute and after opening more folders.
 - [ ] Right-click a folder → *Open in new window* → same: a second window that stays.
+- [ ] Right-click a folder → *Open in new window* on the **desktop** → a second window that
+      stays a window.
+- [ ] Right-click a **file**, then open a folder from the desktop → the folder becomes a tab
+      in the one window (a file right-click must not pin anything).
+- [ ] Right-click a folder, pick *Properties*, then open a folder from Start → it becomes a
+      tab in the one window.
+- [ ] Open a folder while Explorer is busy (a large folder still loading) → if Windows draws
+      a window it disappears into a tab within a couple of seconds, and the next folder opens
+      as a tab (the tab retry recovers instead of giving up).
 - [ ] In that kept window, double-click another folder → the tab opens in that window (not in
       the first one).
 - [ ] Tray menu → *Collect windows into one* → the extra windows are folded in at once, the

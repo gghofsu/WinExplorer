@@ -88,13 +88,20 @@ Two gestures always beat that rule and produce a separate window that WinExplore
 alone from then on:
 
 - **Shift+double-click** a folder (holding Ctrl, Alt or Win works too),
-- right-click a folder → **Open in new window** (the context menu may stay open for a while;
-  a window that appears within 15 s of a right-click is always treated as deliberate).
+- right-click a folder → **Open in new window** — on the desktop or in any Explorer window.
+  The folder that was right-clicked is remembered, so the window that shows up with exactly
+  that folder is the deliberate one. A right-click on a *file*, on empty space or in another
+  app does not stop anything.
 
-Switched off: **Keep a single File Explorer window** in the settings window. **Also fold
-windows that are already open** keeps the fold-in of existing windows while new ones are
-handled as before. **Collect windows into one** in the tray menu performs one pass by hand,
+The pass that does this runs on its own timer (about once a second), independent of the tab
+bookkeeping, and it repairs itself: if Explorer refuses to create a tab for a moment — which
+happens while a folder is loading — WinExplorer retries, and it keeps trying in later passes
+instead of giving up. **Collect windows into one** in the tray menu performs a pass by hand,
 even while the automatic switches are off.
+
+Switched off: **Keep a single File Explorer window** in the settings window. Then the two
+older switches apply again: **Also fold windows that are already open** and **Fold other new
+Explorer windows into tabs**.
 
 ## Requirements
 
@@ -314,7 +321,14 @@ All three can be changed in the **Shortcuts** tab.
   File Explorer window** off.
 - **Two windows remain and never merge** — one of them was opened with `Shift+double-click`
   or *Open in new window*, so it is pinned on purpose. Close it (or drag its tabs where you
-  want them) and the next folder opens in the remaining window.
+  want them) and the next folder opens in the remaining window. The log says why a window was
+  kept (`kept as a window: ...`); `--diagnose` shows the last lines.
+- **A window appears and then turns into a tab** — that is the fold-in working: Windows had
+  already drawn the window. `--single-window` or the tray item does the same thing by hand.
+- **Nothing is folded at all** — look for `Explorer did not create a tab` in the log. Windows
+  11 22H2+ is required; on older builds the app cannot create tabs and every folder falls
+  back to a window (which is also what the tab lookups need). `--restart` reloads the helper
+  after an Explorer update.
 - **Tabs do not work at all** — tabs need Windows 11 22H2+. On older builds folders fall
   back to windows and the log says so.
 - **`Install.cmd` says "No WinExplorer.exe was found"** — you are in the source code ZIP,

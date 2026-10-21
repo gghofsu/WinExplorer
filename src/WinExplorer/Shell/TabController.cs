@@ -27,7 +27,12 @@ internal sealed class TabController : IDisposable
     private readonly Logger _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<nint, long> _selfCreatedWindows = new();
-    private bool _tabsUnsupportedLogged;
+
+    // Explorer refuses a tab now and then while it is busy (a folder is still loading, a
+    // dialog is open, the window just appeared). One failure must never switch tabs off for
+    // the rest of the session, so failures are counted and reset by the next success.
+    private int _consecutiveTabFailures;
+    private bool _unsupportedWarned;
 
     public TabController(Logger log) => _log = log;
 
@@ -35,10 +40,14 @@ internal sealed class TabController : IDisposable
     public event EventHandler<string>? Activity;
 
     /// <summary>
-    /// True once Explorer refused to create a tab: tabs need Windows 11 22H2+, so on older
-    /// builds the caller should stop trying (and stop hiding windows).
+    /// True once Explorer refused to create a tab several times in a row (tabs need Windows
+    /// 11 22H2+, or this Explorer build does not answer the tab command). Callers use it to
+    /// avoid hiding windows; they still try again, because the next success clears it.
     /// </summary>
-    public bool TabsUnsupported => _tabsUnsupportedLogged;
+    public bool TabsUnsupported => _consecutiveTabFailures >= 3;
+
+    /// <summary>How often a tab was refused in a row (0 when tabs work).</summary>
+    public int ConsecutiveTabFailures => _consecutiveTabFailures;
 
     /// <summary>Windows WinExplorer opened itself; the window merger must ignore them.</summary>
     public bool IsSelfCreatedWindow(nint hwnd)
@@ -112,15 +121,39 @@ internal sealed class TabController : IDisposable
                 newTab = await WaitForNewTabAsync(windowHwnd, tabsBefore, 2000, cancellationToken).ConfigureAwait(false);
             }
 
+            if (newTab == 0 && _consecutiveTabFailures == 0)
+            {
+                // Tabs normally work, so this is a hiccup: give Explorer one more, slower try
+                // before falling back to a window.
+                _log.Warn("Explorer did not create a tab; retrying once more, slowly.");
+                await Task.Delay(600, cancellationToken).ConfigureAwait(false);
+                NativeMethods.SendMessageTimeout(windowHwnd, NativeMethods.WM_COMMAND,
+                    NativeMethods.ExplorerCommandNewTab, 0, NativeMethods.SMTO_ABORTIFHUNG, 2500, out _);
+
+                newTab = await WaitForNewTabAsync(windowHwnd, tabsBefore, 3000, cancellationToken).ConfigureAwait(false);
+            }
+
             if (newTab == 0)
             {
-                if (!_tabsUnsupportedLogged)
+                // Cap the counter: it only decides "tabs look unsupported", and a session
+                // that keeps failing must not overflow it.
+                var failures = _consecutiveTabFailures >= 100
+                    ? _consecutiveTabFailures
+                    : Interlocked.Increment(ref _consecutiveTabFailures);
+                if (failures >= 3 && !_unsupportedWarned)
                 {
-                    _tabsUnsupportedLogged = true;
-                    _log.Warn("This build of Windows did not create a tab (tabs need Windows 11 22H2 or later).");
+                    _unsupportedWarned = true;
+                    _log.Warn("Explorer keeps refusing to create tabs (tabs need Windows 11 22H2 or later).");
                 }
+                else
+                {
+                    _log.Warn($"Explorer did not create a tab (failure {failures} in a row).");
+                }
+
                 return null;
             }
+
+            Interlocked.Exchange(ref _consecutiveTabFailures, 0);
 
             ExplorerWindows.InvalidateCache();
             var tab = new ExplorerTab(newTab, windowHwnd, string.Empty, PathNormalizer.ToDisplayName(location));

@@ -18,6 +18,11 @@ internal sealed class ExplorerWatcher : IDisposable
     private readonly NativeMethods.WinEventProc _showCallback;
     private nint _showHook;
     private System.Threading.Timer? _pollTimer;
+
+    // The single-window pass has its own timer: the poll above does tab bookkeeping and
+    // returns early in several cases, and folding a stray window must never wait for that.
+    private System.Threading.Timer? _singleWindowTimer;
+    private int _consolidating;
     private bool _disposed;
 
     private readonly HashSet<nint> _knownWindows = new();
@@ -63,6 +68,7 @@ internal sealed class ExplorerWatcher : IDisposable
         _ = Task.Run(SeedKnownTabsAsync);
 
         _pollTimer = new System.Threading.Timer(_ => Poll(), null, 2000, 1500);
+        _singleWindowTimer = new System.Threading.Timer(_ => ConsolidateTick(), null, 3000, 1200);
         _log.Info("Explorer watcher started.");
     }
 
@@ -76,6 +82,9 @@ internal sealed class ExplorerWatcher : IDisposable
 
         _pollTimer?.Dispose();
         _pollTimer = null;
+
+        _singleWindowTimer?.Dispose();
+        _singleWindowTimer = null;
         _log.Info("Explorer watcher stopped.");
     }
 
@@ -220,8 +229,6 @@ internal sealed class ExplorerWatcher : IDisposable
 
             foreach (var location in closed)
                 _service.NotifyTabClosed(location);
-
-            await ConsolidateIfNeededAsync(windows).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -234,34 +241,55 @@ internal sealed class ExplorerWatcher : IDisposable
     }
 
     /// <summary>
-    /// Single window mode: fold extra windows that were not opened on purpose. Runs from the
-    /// poll, so a second window that appears (Start, taskbar, another app) disappears into a
-    /// tab within a second or two.
+    /// Single window mode: fold extra windows that were not opened on purpose. Runs on its
+    /// own timer, so a second window disappears into a tab within a second or two even while
+    /// the poll above is busy or skipping a pass.
     /// </summary>
-    private async Task ConsolidateIfNeededAsync(List<nint> windows)
+    private async void ConsolidateTick()
     {
-        var settings = _service.Settings;
-        if (!settings.Enabled || !settings.SingleWindowMode || !settings.MergeExistingWindows)
+        if (Interlocked.Exchange(ref _consolidating, 1) == 1)
             return;
 
-        // Windows restored at sign-in arrive in bulk; give the session a few seconds.
-        if (Environment.TickCount64 - _startedAt < 8000)
-            return;
+        try
+        {
+            var settings = _service.Settings;
+            if (!settings.Enabled)
+                return;
 
-        if (windows.Count < 2)
-            return;
+            // Single window mode is the master switch; the older switches apply when it is off.
+            var automatic = settings.SingleWindowMode ||
+                            (settings.MergeNewWindows && settings.MergeExistingWindows);
+            if (!automatic)
+                return;
 
-        // An explicit "give me a window" gesture (Shift+double-click, Open in new window)
-        // must survive this pass; the service pins those windows, and the gesture timestamps
-        // cover the moment before the window is pinned.
-        if (MouseHook.NewWindowGestureRecently() || MouseHook.RightButtonReleasedRecently(2500))
-            return;
+            // Windows restored at sign-in arrive in bulk; give the session a few seconds.
+            if (Environment.TickCount64 - _startedAt < 8000)
+                return;
 
-        var folded = await _service.ConsolidateWindowsAsync().ConfigureAwait(false);
-        if (folded > 0)
-            Merged?.Invoke(this, folded == 1
-                ? "Folded an extra window into a tab."
-                : $"Folded {folded} extra windows into tabs.");
+            // Do not fight the user's hands: a modified double-click or a folder context menu
+            // (Open in new window) may be about to create a window that will be pinned.
+            if (MouseHook.NewWindowGestureRecently() || MouseHook.FolderRightClickRecently(2500))
+                return;
+
+            if (ExplorerWindows.GetWindows().Count < 2)
+                return;
+
+            var folded = await _service.ConsolidateWindowsAsync().ConfigureAwait(false);
+            if (folded > 0)
+            {
+                Merged?.Invoke(this, folded == 1
+                    ? "Folded an extra window into a tab."
+                    : $"Folded {folded} extra windows into tabs.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error("The single-window pass failed", ex);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _consolidating, 0);
+        }
     }
 
     private void PruneKnownWindows(List<nint> windows)

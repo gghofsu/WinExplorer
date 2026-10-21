@@ -26,6 +26,10 @@ internal sealed class ExplorerService : IDisposable
     private readonly HashSet<nint> _pinnedWindows = new();
     private readonly object _pinGate = new();
 
+    // Windows that could not be folded (Explorer refused the tab). They are retried after a
+    // pause instead of every second, so a stubborn window cannot cause a create/close loop.
+    private readonly Dictionary<nint, long> _foldBackoff = new();
+
     public ExplorerService(TabController tabs, SettingsStore settings, Logger log, TabHistory? history = null)
     {
         _tabs = tabs;
@@ -133,6 +137,11 @@ internal sealed class ExplorerService : IDisposable
         var window = await _tabs.OpenNewWindowAsync(path, cancellationToken).ConfigureAwait(false);
         if (window == 0)
             return Report(new OpenResult(OpenOutcome.Failed, path, Message: "Windows did not open a window."), request);
+
+        // An explicit "new window" request (--new-window, the context menu) must survive the
+        // single-window pass. Windows created only as a fallback are not pinned.
+        if (request.Mode == OpenMode.NewWindow)
+            Pin(window);
 
         if (request.Activate)
             await _tabs.ActivateWindowAsync(window).ConfigureAwait(false);
@@ -249,26 +258,18 @@ internal sealed class ExplorerService : IDisposable
         if (newWindow == 0 || !NativeMethods.IsWindow(newWindow))
             return false;
 
-        if (_tabs.TabsUnsupported)
-        {
-            _log.Debug("Merge skipped: this build of Windows does not support tabs.");
-            return false;
-        }
-
         if (_tabs.IsSelfCreatedWindow(newWindow))
             return false;
 
-        // "I really want a window" gestures. The window stays pinned afterwards, so the
-        // consolidation pass does not undo the user's deliberate choice either.
-        if (ShouldKeepAsWindow(newWindow, out var reason))
+        var tabs = ExplorerWindows.GetTabs(newWindow);
+
+        // This path only knows how to move the folder of the active tab, so a window with
+        // several tabs is left to the consolidation pass, which moves every one of them.
+        if (tabs.Count > 1)
         {
-            _log.Debug($"Merge skipped: window 0x{newWindow:X} was opened on purpose ({reason}).");
+            _log.Debug($"Merge skipped: window 0x{newWindow:X} already has {tabs.Count} tabs.");
             return false;
         }
-
-        var tabs = ExplorerWindows.GetTabs(newWindow);
-        if (tabs.Count > 1)
-            return false; // a window the user assembled; leave it alone
 
         string? location = null;
         var deadline = Environment.TickCount64 + 2500;
@@ -301,11 +302,23 @@ internal sealed class ExplorerService : IDisposable
             return false;
         }
 
-        // Re-opening / detaching a tab also produces a window; do not swallow those.
+        // Dragging a tab out of a window creates a new window on purpose, and so does
+        // "Open in new window": the tab was just detached/closed from somewhere.
         if (_history.Snapshot().Any(c => string.Equals(c.Path, location, StringComparison.OrdinalIgnoreCase) &&
                                          DateTimeOffset.Now - c.ClosedAt < TimeSpan.FromSeconds(2)))
         {
-            _log.Debug($"Merge skipped: '{location}' was just closed/detached.");
+            Pin(newWindow);
+            _log.Info($"Window 0x{newWindow:X} ('{PathNormalizer.ToDisplayName(location)}') kept: " +
+                      "it was just detached from a window.");
+            return false;
+        }
+
+        // The explicit "give me a window" gestures. The window stays pinned afterwards, so
+        // the consolidation pass does not undo the user's deliberate choice either.
+        if (ShouldKeepAsWindow(newWindow, location, out var reason))
+        {
+            _log.Info($"Window 0x{newWindow:X} ('{PathNormalizer.ToDisplayName(location)}') kept " +
+                      $"as a window: {reason}.");
             return false;
         }
 
@@ -321,7 +334,9 @@ internal sealed class ExplorerService : IDisposable
             return false;
         }
 
-        var hidden = WindowAnimator.Hide(newWindow);
+        // Hiding only helps when the window is about to disappear; with tabs known to be
+        // broken the window has to be shown again a moment later, which looks worse.
+        var hidden = !_tabs.TabsUnsupported && WindowAnimator.Hide(newWindow);
         try
         {
             var result = await OpenAsync(new OpenRequest
@@ -367,10 +382,10 @@ internal sealed class ExplorerService : IDisposable
 
     /// <summary>
     /// True when a window must be left alone because the user asked for it: a modified
-    /// double-click just happened, a right-click (Open in new window) is recent, Ctrl+Shift
-    /// is held, or the window was already pinned for one of those reasons.
+    /// double-click just happened, "Open in new window" was used on this very folder,
+    /// Ctrl+Shift is held, or the window was already pinned for one of those reasons.
     /// </summary>
-    private bool ShouldKeepAsWindow(nint window, out string reason)
+    private bool ShouldKeepAsWindow(nint window, string? location, out string reason)
     {
         if (NativeMethods.IsCtrlDown() && NativeMethods.IsShiftDown())
         {
@@ -386,12 +401,12 @@ internal sealed class ExplorerService : IDisposable
             return true;
         }
 
-        // A context menu stays open until the user picks an item, which can take a while;
-        // be generous so "Open in new window" is never folded back into a tab. The window is
-        // pinned, so a merge skipped by mistake costs one extra window, not a lost tab.
-        if (MouseHook.RightButtonReleasedRecently(15000))
+        // "Open in new window" from the context menu. Only a right-click on *this* folder
+        // counts (a context menu can stay open for a while, hence the generous window); a
+        // right-click somewhere else must not leave a stray window behind for ever.
+        if (MouseHook.FolderRightClickMatches(location))
         {
-            reason = "right-click / Open in new window";
+            reason = "right-click -> Open in new window";
             Pin(window);
             return true;
         }
@@ -435,7 +450,28 @@ internal sealed class ExplorerService : IDisposable
         {
             foreach (var window in _pinnedWindows.Where(h => !alive.Contains(h)).ToList())
                 _pinnedWindows.Remove(window);
+
+            foreach (var window in _foldBackoff.Keys.Where(h => !alive.Contains(h)).ToList())
+                _foldBackoff.Remove(window);
         }
+    }
+
+    /// <summary>True when this window already failed to fold and should be left alone for a while.</summary>
+    private bool IsBackingOff(nint window)
+    {
+        lock (_pinGate)
+        {
+            return _foldBackoff.TryGetValue(window, out var since) &&
+                   Environment.TickCount64 - since < 60000;
+        }
+    }
+
+    private void BackOff(nint window, string reason)
+    {
+        lock (_pinGate)
+            _foldBackoff[window] = Environment.TickCount64;
+
+        _log.Warn($"Window 0x{window:X} stays a window for now: {reason}");
     }
 
     /// <summary>
@@ -450,12 +486,12 @@ internal sealed class ExplorerService : IDisposable
         if (!settings.Enabled)
             return 0;
 
-        // The tray item and the command line are explicit requests, so they also work while
-        // the automatic consolidation switches are off.
-        if (!force && (!settings.SingleWindowMode || !settings.MergeExistingWindows))
-            return 0;
-
-        if (_tabs.TabsUnsupported)
+        // Single window mode is the master switch: while it is on, extra windows are always
+        // folded. The two older switches only matter when the mode is off. The tray item and
+        // the command line are explicit requests, so they always work.
+        var automatic = settings.SingleWindowMode ||
+                        (settings.MergeNewWindows && settings.MergeExistingWindows);
+        if (!force && !automatic)
             return 0;
 
         // One pass at a time: the watcher polls, and the tray command can fire as well.
@@ -468,7 +504,7 @@ internal sealed class ExplorerService : IDisposable
             var windows = ExplorerWindows.GetWindows();
             PrunePinnedWindows(windows);
 
-            var candidates = windows.Where(w => !IsPinned(w) && !_tabs.IsSelfCreatedWindow(w)).ToList();
+            var candidates = windows.Where(w => !IsPinned(w)).ToList();
             if (candidates.Count < 2)
                 return 0;
 
@@ -485,7 +521,15 @@ internal sealed class ExplorerService : IDisposable
                     continue;
 
                 if (await FoldWindowIntoAsync(window, target, cancellationToken).ConfigureAwait(false))
+                {
                     folded++;
+                }
+                else if (candidates.Count - folded > 1)
+                {
+                    // Reported once per pass at debug level; the reason itself is logged by
+                    // FoldWindowIntoAsync. It is picked up by --diagnose if it keeps happening.
+                    _log.Debug($"Window 0x{window:X} could not be folded into 0x{target:X}.");
+                }
             }
 
             if (folded > 0)
@@ -541,26 +585,54 @@ internal sealed class ExplorerService : IDisposable
     {
         var settings = _settings.Current;
 
+        if (IsBackingOff(window))
+            return false;
+
         var locations = new List<string>();
         var tabs = ExplorerWindows.GetTabs(window);
-        foreach (var tab in tabs)
+
+        if (tabs.Count == 0)
         {
-            var location = await _tabs.GetTabLocationAsync(tab, cancellationToken).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(location))
+            // Explorer did not list the tabs (it is still starting, or the window is busy).
+            // The window itself still reports its folder, which is just as good.
+            var active = await _tabs.GetActiveLocationAsync(window, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(active))
             {
-                // A tab that is still navigating cannot be recreated, so do not close the
-                // window behind its back; the next pass will try again.
-                _log.Debug($"Consolidation postponed for 0x{window:X}: a tab has no location yet.");
+                _log.Debug($"Consolidation postponed for 0x{window:X}: it reports no folder yet.");
                 return false;
             }
 
-            locations.Add(PathNormalizer.Normalize(location));
+            locations.Add(PathNormalizer.Normalize(active));
+        }
+        else
+        {
+            foreach (var tab in tabs)
+            {
+                var location = await _tabs.GetTabLocationAsync(tab, cancellationToken).ConfigureAwait(false);
+                if (string.IsNullOrEmpty(location))
+                    continue;
+
+                locations.Add(PathNormalizer.Normalize(location));
+            }
         }
 
-        if (locations.Count == 0 || locations.Count != tabs.Count)
+        if (locations.Count != (tabs.Count == 0 ? 1 : tabs.Count))
         {
-            _log.Debug($"Consolidation skipped 0x{window:X}: it has no readable tab.");
-            return false;
+            // Some tabs could not be read, so they could not be recreated. A single tab
+            // window still knows its folder through the window itself; anything else is
+            // postponed until Explorer reports all of its tabs.
+            if (tabs.Count <= 1 && locations.Count == 0)
+            {
+                var active = await _tabs.GetActiveLocationAsync(window, cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(active))
+                    locations.Add(PathNormalizer.Normalize(active));
+            }
+
+            if (locations.Count == 0 || tabs.Count > 1)
+            {
+                _log.Debug($"Consolidation postponed for 0x{window:X}: its tabs are not readable yet.");
+                return false;
+            }
         }
 
         // Closing this window would take its remaining tabs with it, so leave the whole
@@ -574,7 +646,6 @@ internal sealed class ExplorerService : IDisposable
 
         foreach (var location in locations)
         {
-
             // Already open in the surviving window: nothing to add, just drop the duplicate.
             if (ExplorerWindows.FindTab(location, target, acrossAllWindows: false) is not null)
             {
@@ -594,7 +665,17 @@ internal sealed class ExplorerService : IDisposable
 
             if (!result.Succeeded)
             {
-                _log.Warn($"Consolidation stopped for 0x{window:X}: '{location}' could not be opened.");
+                BackOff(window, $"'{PathNormalizer.ToDisplayName(location)}' could not be opened.");
+                return false;
+            }
+
+            if (result.Outcome == OpenOutcome.OpenedNewWindow)
+            {
+                // Explorer refused the tab and opened yet another window. Keep the window we
+                // were trying to fold (it shows the same folder) instead of piling up more.
+                BackOff(window, "Explorer refused to create a tab.");
+                if (result.Window != 0 && result.Window != window)
+                    await _tabs.CloseWindowAsync(result.Window, cancellationToken).ConfigureAwait(false);
                 return false;
             }
 
@@ -602,9 +683,15 @@ internal sealed class ExplorerService : IDisposable
         }
 
         ExplorerWindows.InvalidateCache();
+
+        // Explorer closes a window by itself once its last tab has moved to the other
+        // window, which makes the close fail on a handle that no longer exists.
+        if (!NativeMethods.IsWindow(window))
+            return true;
+
         if (!await _tabs.CloseWindowAsync(window, cancellationToken).ConfigureAwait(false))
         {
-            _log.Warn($"Consolidation could not close window 0x{window:X}.");
+            _log.Debug($"Consolidation could not close window 0x{window:X}; retrying later.");
             return false;
         }
 
