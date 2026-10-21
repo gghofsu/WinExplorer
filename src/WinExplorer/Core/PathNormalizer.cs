@@ -46,7 +46,7 @@ public static class PathNormalizer
 
         // "shell:..." and shorthand "::{GUID}" / "{GUID}"
         if (value.StartsWith("::", StringComparison.Ordinal))
-            value = "shell:" + value;
+            value = "shell::" + value;
         else if (value.StartsWith('{') && value.EndsWith('}'))
             value = "shell:::" + value;
 

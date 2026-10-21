@@ -262,15 +262,15 @@ internal sealed class AppRuntime : IDisposable
 
         try
         {
-            var candidate = Path.Combine(currentLocation, itemName);
-            if (Directory.Exists(candidate))
-                return PathNormalizer.Normalize(candidate);
-
-            // Display names can differ in punctuation/case; match against the real entries.
+            // Display names can differ in punctuation/case; match against the real entries
+            // first so the result keeps the casing that is stored on disk.
             var match = Directory.EnumerateDirectories(currentLocation)
                 .FirstOrDefault(d => string.Equals(Path.GetFileName(d), itemName, StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
+                return PathNormalizer.Normalize(match);
 
-            return match is null ? null : PathNormalizer.Normalize(match);
+            var candidate = Path.Combine(currentLocation, itemName);
+            return Directory.Exists(candidate) ? PathNormalizer.Normalize(candidate) : null;
         }
         catch
         {
