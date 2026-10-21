@@ -80,14 +80,14 @@ is passed straight to Explorer, so the folder opens in its own window.
 The default is strict: **one File Explorer window**. Whatever makes a folder appear — a
 double-click, the desktop, Start, the taskbar, Win+E, a shortcut in another app, a
 `WinExplorer.exe --open` call — it lands as a tab in the window you already have. Windows
-that appear anyway (this PC, an app that insists on its own window, a window you left open
-before starting WinExplorer) are folded in within a second or two, their tabs moved over and
-the empty window closed.
+that appear anyway (a second window from an app, a window you opened before starting
+WinExplorer, a *This PC* window with virtual folders allowed) are folded in within a second
+or two: their tabs move over and the empty window is closed.
 
 Two gestures always beat that rule and produce a separate window that WinExplorer leaves
 alone from then on:
 
-- **Shift+double-click** a folder (any modifier key does it),
+- **Shift+double-click** a folder (holding Ctrl, Alt or Win works too),
 - right-click a folder → **Open in new window**.
 
 Switched off: **Keep a single File Explorer window** in the settings window. **Also fold
