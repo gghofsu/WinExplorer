@@ -21,6 +21,9 @@ internal static class ShellCom
     // times a second is both slow and a good way to upset the shell's automation server.
     [ThreadStatic] private static object? _shell;
 
+    /// <summary>The registered Shell.Application type (has the real member table).</summary>
+    private static Type? ProgIdType;
+
     [ThreadStatic]
     private static (long Tick, Dictionary<nint, ShellTabLocation> Map) _memo;
 
@@ -207,6 +210,15 @@ internal static class ShellCom
         return $"shell automation: {shell}, {answer}, {LastWindowCount} window(s), last error {error}{property}";
     }
 
+    private static int _lookupsPerTab;
+    private static int _lookupsPerWindow;
+    private static int _lookupsUi;
+
+    /// <summary>How tab folders were found so far (for --diagnose).</summary>
+    public static string DescribeLookups() =>
+        $"per-tab {Volatile.Read(ref _lookupsPerTab)}, per-window {Volatile.Read(ref _lookupsPerWindow)}, " +
+        $"from the UI {Volatile.Read(ref _lookupsUi)}";
+
     /// <summary>Location of a single tab; empty when the shell does not know it yet.</summary>
     public static string? GetTabLocation(nint tabHwnd)
     {
@@ -214,11 +226,44 @@ internal static class ShellCom
             return null;
 
         var map = QueryTabLocations();
-        if (map.TryGetValue(tabHwnd, out var entry) && !string.IsNullOrEmpty(entry.Location))
-            return entry.Location;
 
-        // The automation server did not know this tab; ask the tab's own UI instead.
-        return AddressBarText.TryRead(tabHwnd) ?? UiaAddressBar.TryRead(tabHwnd);
+        // Per-tab builds (Windows 11 with tabs): the shell knows every tab.
+        if (map.TryGetValue(tabHwnd, out var entry) && !string.IsNullOrEmpty(entry.Location))
+        {
+            Interlocked.Increment(ref _lookupsPerTab);
+            return entry.Location;
+        }
+
+        // Per-window builds: the shell knows the window, and its entry is the folder of the
+        // tab that is showing. That is only the answer for *this* tab when it is the only one.
+        var window = ParentWindowOf(tabHwnd);
+        if (window != 0 && ExplorerWindows.GetTabs(window).Count <= 1)
+        {
+            if (map.TryGetValue(window, out var windowEntry) && !string.IsNullOrEmpty(windowEntry.Location))
+            {
+                Interlocked.Increment(ref _lookupsPerWindow);
+                return windowEntry.Location;
+            }
+
+            foreach (var candidate in map.Values)
+            {
+                if (candidate.WindowHwnd == window && !string.IsNullOrEmpty(candidate.Location))
+                {
+                    Interlocked.Increment(ref _lookupsPerWindow);
+                    return candidate.Location;
+                }
+            }
+        }
+
+        // The automation server did not know this tab; ask the UI instead, best handle first.
+        var fromUi = AddressBarText.TryRead(tabHwnd)
+                     ?? UiaAddressBar.TryRead(tabHwnd)
+                     ?? (window != 0 ? AddressBarText.TryRead(window) ?? UiaAddressBar.TryRead(window) : null);
+
+        if (fromUi is not null)
+            Interlocked.Increment(ref _lookupsUi);
+
+        return fromUi;
     }
 
     /// <summary>Location of the tab that currently has focus in <paramref name="windowHwnd"/>.</summary>
@@ -234,10 +279,17 @@ internal static class ShellCom
         if (map.TryGetValue(windowHwnd, out var direct))
             return direct.Location;
 
+        // Entries are keyed by tab on some builds and by window on others; accept both.
         foreach (var candidate in map.Values)
         {
-            if (candidate.WindowHwnd == windowHwnd && !string.IsNullOrEmpty(candidate.Location))
+            if (string.IsNullOrEmpty(candidate.Location))
+                continue;
+
+            if (candidate.WindowHwnd == windowHwnd || candidate.TabHwnd == windowHwnd ||
+                ParentWindowOf(candidate.TabHwnd) == windowHwnd)
+            {
                 return candidate.Location;
+            }
         }
 
         // Second opinion: the active tab's own address bar, then the window's.
@@ -426,7 +478,17 @@ internal static class ShellCom
 
         try
         {
-            return instance.GetType().InvokeMember(property, System.Reflection.BindingFlags.GetProperty,
+            // A runtime callable wrapper's GetType() is System.__ComObject, which has no
+            // members at all - asking it for "Windows" fails with DISP_E_MEMBERNOTFOUND.
+            // The ProgID type carries the real member table.
+            var type = instance.GetType();
+            if (type == typeof(object) || type.Name.Contains("__ComObject", StringComparison.Ordinal))
+                type = ProgIdType ??= Type.GetTypeFromProgID("Shell.Application");
+
+            if (type is null)
+                return null;
+
+            return type.InvokeMember(property, System.Reflection.BindingFlags.GetProperty,
                 null, instance, null);
         }
         catch (Exception ex)

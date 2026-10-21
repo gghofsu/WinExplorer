@@ -720,6 +720,10 @@ public partial class App : Application
                 foreach (var window in windows)
                 {
                     builder.AppendLine($"  0x{window:X}  '{WinExplorer.Interop.NativeMethods.GetClassName(window)}'");
+                    builder.AppendLine($"    MSAA(window) : {WinExplorer.Shell.AddressBarText.TryRead(window) ?? "(nothing)"}");
+                    builder.AppendLine($"    UIA(window)  : {WinExplorer.Shell.UiaAddressBar.TryRead(window, maxAgeMs: 0) ?? "(nothing)"}");
+                    builder.AppendLine($"    IESW(window) : {WinExplorer.Shell.ShellWindowsQuery.ProbePropertyErrors(window)}");
+
                     var tabHandles = WinExplorer.Shell.ExplorerWindows.GetTabs(window);
                     if (tabHandles.Count == 0)
                     {

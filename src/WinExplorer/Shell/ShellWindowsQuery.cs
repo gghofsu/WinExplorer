@@ -145,16 +145,28 @@ internal static class ShellWindowsQuery
                     if (window is null)
                         continue;
 
-                    if ((nint)ToLong(Read(window, "HWND", out _)) != windowHwnd)
+                    var entryHandle = (nint)ToLong(Read(window, "HWND", out _));
+
+                    // The handle may be the tab or the window, depending on the build, and
+                    // the caller passes a tab handle: accept both, and the tab's parent.
+                    var matches = entryHandle == windowHwnd ||
+                                  ParentWindowOf(entryHandle) == windowHwnd ||
+                                  ParentWindowOf(windowHwnd) == entryHandle;
+
+                    if (!matches)
                         continue;
 
                     var url = Read(window, "LocationURL", out var urlError);
                     if (urlError is not null)
                         return $"LocationURL: {urlError}";
 
+                    var owner = entryHandle == windowHwnd
+                        ? string.Empty
+                        : $" (entry handle 0x{entryHandle:X}, matched by parent)";
+
                     return url is string text && text.Length > 0
-                        ? $"LocationURL = {text}"
-                        : "LocationURL is empty";
+                        ? $"LocationURL = {text}{owner}"
+                        : $"LocationURL is empty{owner}";
                 }
                 finally
                 {

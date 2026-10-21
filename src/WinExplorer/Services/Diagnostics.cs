@@ -68,6 +68,7 @@ internal static class Diagnostics
         builder.AppendLine();
         builder.AppendLine("Shell");
         builder.AppendLine("  " + Shell.ShellCom.Describe());
+        builder.AppendLine("  tab lookups: " + Shell.ShellCom.DescribeLookups());
         builder.AppendLine("  " + StaExecutor.HealthSummary());
         builder.AppendLine($"  Minimize to tray        : {settings.MinimizeToTrayOnClose}");
         builder.AppendLine();
