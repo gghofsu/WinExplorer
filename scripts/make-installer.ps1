@@ -67,9 +67,10 @@ if (-not $Iscc) {
 $env:WINEXPLORER_VERSION = $version
 
 Write-Host "Compiling $iss" -ForegroundColor Cyan
-& $Iscc "/DAppVersion=$version" $iss
+$output = & $Iscc "/DAppVersion=$version" $iss 2>&1
+$output | Out-Host
 if ($LASTEXITCODE -ne 0) {
-    throw "Inno Setup failed with exit code $LASTEXITCODE"
+    throw "Inno Setup failed with exit code $LASTEXITCODE`n$($output -join [Environment]::NewLine)"
 }
 
 $setup = Join-Path $root "installer\Output\WinExplorer-$version-setup.exe"
