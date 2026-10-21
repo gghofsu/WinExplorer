@@ -96,7 +96,8 @@ alone from then on:
 The pass that does this runs on its own timer (about once a second), independent of the tab
 bookkeeping, and it repairs itself: if Explorer refuses to create a tab for a moment — which
 happens while a folder is loading — WinExplorer retries, and it keeps trying in later passes
-instead of giving up. **Collect windows into one** in the tray menu performs a pass by hand,
+instead of giving up. If a tab cannot be created at all and the window has a single tab, the
+folder is shown in that tab instead of in a new window. **Collect windows into one** in the tray menu performs a pass by hand,
 even while the automatic switches are off.
 
 Switched off: **Keep a single File Explorer window** in the settings window. Then the two

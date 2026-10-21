@@ -108,7 +108,19 @@ internal sealed class ExplorerService : IDisposable
 
             if (tab is null)
             {
-                // Explorer refused to add a tab (Windows 10, or a broken Explorer state).
+                // Explorer refused to add a tab. A second window would break the one-window
+                // rule, so show the folder in the window that is already open when that does
+                // not throw away another tab of it.
+                var tabsInTarget = ExplorerWindows.GetTabs(targetWindow);
+                if (tabsInTarget.Count <= 1 &&
+                    await _tabs.NavigateActiveTabAsync(targetWindow, path, cancellationToken).ConfigureAwait(false))
+                {
+                    _history.Forget(path);
+                    _log.Info($"No tab could be created; '{path}' was opened in the current tab.");
+                    return Report(new OpenResult(OpenOutcome.OpenedNewTab, path, targetWindow),
+                        request);
+                }
+
                 _log.Warn($"Falling back to a new window for '{path}'.");
                 return await OpenInNewWindowAsync(path, request, cancellationToken).ConfigureAwait(false);
             }

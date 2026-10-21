@@ -208,6 +208,44 @@ internal sealed class TabController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Navigates the active tab of <paramref name="windowHwnd"/> to <paramref name="location"/>.
+    /// The last resort when Explorer will not create a tab: the folder still ends up in the
+    /// window that is already open instead of in a new window.
+    /// </summary>
+    public async Task<bool> NavigateActiveTabAsync(nint windowHwnd, string location,
+        CancellationToken cancellationToken = default)
+    {
+        var tabs = ExplorerWindows.GetTabs(windowHwnd);
+        if (tabs.Count == 0)
+            return false;
+
+        var tab = tabs[0];
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var navigated = await _navSta.RunAsync(() => ShellCom.NavigateTab(tab, location))
+                .ConfigureAwait(false);
+
+            if (navigated)
+            {
+                ExplorerWindows.InvalidateCache();
+                _log.Info($"Navigated tab 0x{tab:X} of window 0x{windowHwnd:X} to '{location}'.");
+            }
+
+            return navigated;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Navigating the active tab failed", ex);
+            return false;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     /// <summary>Switches the window to <paramref name="tabHwnd"/>.</summary>
     public async Task<bool> SelectTabAsync(nint windowHwnd, nint tabHwnd, bool activateWindow,
         CancellationToken cancellationToken = default)
