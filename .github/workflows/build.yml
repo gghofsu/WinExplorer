@@ -134,7 +134,15 @@ jobs:
         run: |
           $version = (Get-Content src/WinExplorer/WinExplorer.csproj |
             Select-String -Pattern '<Version>(.*)</Version>').Matches[0].Groups[1].Value
-          ./scripts/make-installer.ps1 -OutputDirectory publish -Iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          try {
+            ./scripts/make-installer.ps1 -OutputDirectory publish -Iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          }
+          catch {
+            # Mirror the failure into a check annotation; the raw runner log is not always
+            # downloadable through the API.
+            Write-Host "::error title=Inno Setup::$($_.Exception.Message -replace '\r?\n', ' ')"
+            throw
+          }
           Copy-Item "installer/Output/WinExplorer-$version-setup.exe" artifacts/
 
       - name: Upload artifacts
