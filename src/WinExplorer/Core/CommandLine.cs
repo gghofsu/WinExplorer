@@ -19,6 +19,7 @@ public enum CommandKind
     UninstallContextMenu,
     InstallStartup,
     UninstallStartup,
+    ToggleStartup,
     ShowLog,
     Help,
     Version
@@ -219,6 +220,11 @@ public static class CommandLine
                     SetKind(CommandKind.UninstallStartup);
                     break;
 
+                case "toggle-startup":
+                case "--toggle-startup":
+                    SetKind(CommandKind.ToggleStartup);
+                    break;
+
                 case "log":
                 case "--log":
                     SetKind(CommandKind.ShowLog);
@@ -289,7 +295,7 @@ public static class CommandLine
           WinExplorer.exe --reopen-closed         Reopen the last closed folder
           WinExplorer.exe --pause | --resume | --toggle
           WinExplorer.exe --install-context-menu | --uninstall-context-menu
-          WinExplorer.exe --install-startup | --uninstall-startup
+          WinExplorer.exe --install-startup | --uninstall-startup | --toggle-startup
           WinExplorer.exe --exit
         """;
 }

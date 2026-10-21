@@ -46,6 +46,7 @@ right-click   → Open in new window        →  a separate window, because you 
 | **Window folding** *(optional)* | Windows opened from the desktop, Start, the taskbar or another app are folded into a tab too. Right after a right-click, and while Ctrl+Shift is held, windows are left alone so "Open in new window" keeps working. |
 | **Duplicate / reopen shortcuts** | Global shortcuts to duplicate the current tab and to reopen the last closed folder, browser style. |
 | **Win+E as a tab** *(optional)* | Turn Win+E into "open This PC (or Home) as a tab". |
+| **One-click install and uninstall** | Double-click `Install.cmd` to install, `Uninstall.cmd` (or the entry Windows itself lists in *Settings → Apps*) to remove it. Startup is one checkbox — or one tray-menu click — either way. |
 | **Per-user only** | Lives in `HKCU`, needs no administrator rights, touches no system files, does not inject code into Explorer. |
 | **Honest fallbacks** | If Explorer refuses a tab (Windows 10, a Windows update, a virtual folder) the folder opens in a window instead of vanishing. |
 
@@ -83,54 +84,99 @@ is passed straight to Explorer.
 
 ## Install
 
-### From a release
+WinExplorer installs per user: no administrator rights are needed and nothing outside your
+own profile is changed.
 
-1. Download `WinExplorer-<version>-win-x64.zip`.
-2. Unpack it somewhere permanent, e.g. `%LOCALAPPDATA%\Programs\WinExplorer`.
-3. Run `WinExplorer.exe`.
-4. In the settings window turn on:
-   - **Add "Open in WinExplorer tab" to the folder right-click menu**
-   - **Start WinExplorer when I sign in**
+### The simple way: double-click `Install.cmd`
 
-   Both are per-user and can be switched off again at any time.
+1. Download a release zip:
+   - `WinExplorer-<version>-win-x64-selfcontained.zip` — needs nothing else installed, or
+   - `WinExplorer-<version>-win-x64.zip` — smaller, needs the
+     [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).
+2. Unpack it anywhere.
+3. Double-click **`Install.cmd`** in the unpacked folder.
+4. Answer the two questions (Enter accepts the default):
+   - **Start WinExplorer automatically when you sign in?** — `Y` adds the per-user startup
+     entry, `n` leaves it out.
+   - **Integrate with File Explorer (right-click menu and folders open as tabs)?** — `Y`
+     registers the right-click entries and makes WinExplorer the per-user handler for
+     folder double-clicks. Both can be switched off again separately in the settings
+     window after installing.
 
-### From source
+That is the whole installation. The script copies the app to
+`%LOCALAPPDATA%\Programs\WinExplorer`, creates Start Menu shortcuts, registers it in
+**Settings → Apps → Installed apps** so the normal Windows uninstaller can remove it, and
+starts WinExplorer. `Install.cmd` and `Uninstall.cmd` are copied along with the app, so you
+can repair or uninstall later without keeping the original zip.
 
-```powershell
-git clone https://github.com/gghofsu/WinExplorer
-cd WinExplorer
-dotnet publish src\WinExplorer\WinExplorer.csproj -c Release -r win-x64 --self-contained false -o .\publish
-.\publish\WinExplorer.exe
-```
+Run from a source checkout, `Install.cmd` builds the app first (it needs the .NET 8 SDK).
 
-Or use the helper scripts:
+#### Installer options
 
-```powershell
-.\scripts\build.ps1                  # build + run the unit tests
-.\scripts\publish.ps1                # framework-dependent zip in .\artifacts
-.\scripts\publish.ps1 -SelfContained  # no runtime needed, larger zip
-.\scripts\install.ps1                # publish to %LOCALAPPDATA%\Programs\WinExplorer, register, start
-.\scripts\install.ps1 -NoBuild       # only register an existing install
-```
+Anything after `Install.cmd` is passed on to `scripts\install-app.ps1`:
 
-`install.ps1` copies the app into `%LOCALAPPDATA%\Programs\WinExplorer`, turns on the
-context menu and the start-with-Windows entry, and launches it. Everything it writes is
-per-user, so no elevation is involved.
+| Command | Result |
+|---|---|
+| `Install.cmd -NoStartup` | install without the startup entry |
+| `Install.cmd -Startup -ContextMenu` | add both integration points, without asking |
+| `Install.cmd -Quiet -NoLaunch` | unattended install with the defaults |
+| `Install.cmd -Destination D:\Apps\WinExplorer` | install into a different folder |
+| `Install.cmd -Source <folder>` | install from another folder that holds `WinExplorer.exe` |
 
-### Installer
+`-Quiet` never asks; startup and the File Explorer integration are both enabled unless you
+add `-NoStartup` or `-NoContextMenu`.
 
-`installer\WinExplorer.iss` is a per-user [Inno Setup](https://jrsoftware.org/isdl.php) 6
-script. Build the payload and the setup executable in one step:
+### Setup wizard
+
+`WinExplorer-<version>-setup.exe` (built on release tags) is an optional wizard made with
+[Inno Setup](https://jrsoftware.org/isdl.php) 6. It asks the same two questions as
+checkboxes and registers its own per-user uninstaller in **Settings → Apps**. To build it
+from source:
 
 ```powershell
 .\scripts\make-installer.ps1                 # self-contained payload (no .NET needed)
 .\scripts\make-installer.ps1 -SelfContained:$false
 ```
 
-The result is `installer\Output\WinExplorer-<version>-setup.exe`. The wizard offers
-"start when I sign in" and "add the folder right-click menu" as tasks; uninstalling removes
-both again and restores the previous folder handler. Like everything else it installs per
-user into `%LOCALAPPDATA%\Programs\WinExplorer` and never asks for administrator rights.
+The result is `installer\Output\WinExplorer-<version>-setup.exe`.
+
+### From source or manually
+
+```powershell
+git clone https://github.com/gghofsu/WinExplorer
+cd WinExplorer
+.\Install.cmd                                # build, install, register, start
+```
+
+Or do it by hand:
+
+```powershell
+dotnet publish src\WinExplorer\WinExplorer.csproj -c Release -r win-x64 --self-contained false -o .\publish
+.\publish\WinExplorer.exe
+```
+
+Helper scripts:
+
+```powershell
+.\scripts\build.ps1                  # build + run the unit tests
+.\scripts\publish.ps1                # framework-dependent zip in .\artifacts
+.\scripts\publish.ps1 -SelfContained # no runtime needed, larger zip
+.\scripts\install.ps1                # publish to %LOCALAPPDATA%\Programs\WinExplorer, register, start
+.\scripts\install.ps1 -NoBuild       # only register an existing install
+```
+
+`install.ps1` is the developer helper (it publishes first); `Install.cmd` +
+`scripts\install-app.ps1` is the end-user installer described above. Both write only
+per-user state.
+
+### Start with Windows
+
+The startup entry can be added or removed at any time, without reinstalling:
+
+- **Settings window** → *Start WinExplorer when I sign in*;
+- **Tray menu** → *Start with Windows* (checkmark shows the current state);
+- **Command line**: `WinExplorer.exe --install-startup`, `--uninstall-startup` or
+  `--toggle-startup`.
 
 ## Using it
 
@@ -142,6 +188,7 @@ user into `%LOCALAPPDATA%\Programs\WinExplorer` and never asks for administrator
   `Alt+Shift+T`, **pause/resume** WinExplorer with `Ctrl+Alt+P`.
 - Closing the settings window keeps WinExplorer running in the tray (configurable). Use
   *Exit WinExplorer* in the tray menu to stop it completely.
+- Tray menu → **Start with Windows** adds or removes the startup entry with one click.
 
 ## Settings
 
@@ -184,7 +231,7 @@ WinExplorer.exe --pause | --resume | --toggle
 WinExplorer.exe --settings               Show the window of the running instance
 WinExplorer.exe --install-context-menu   Add the right-click entries (per user)
 WinExplorer.exe --uninstall-context-menu Remove them and restore the old handler
-WinExplorer.exe --install-startup | --uninstall-startup
+WinExplorer.exe --install-startup | --uninstall-startup | --toggle-startup
 WinExplorer.exe --log                    Open the log file
 WinExplorer.exe --exit                   Stop the helper
 WinExplorer.exe --version | --help
@@ -245,16 +292,32 @@ All three can be changed in the **Shortcuts** tab.
 
 ## Uninstall
 
-1. Tray menu → **Exit WinExplorer**.
-2. Settings → switch off **Start WinExplorer when I sign in** and both integration
-   checkboxes (this removes the registry entries and restores your previous folder handler).
-3. Delete the folder you unpacked WinExplorer into (or run the uninstaller when you used
-   `WinExplorer-<version>-setup.exe`).
-4. Optionally delete `%APPDATA%\WinExplorer`.
+WinExplorer registers itself with Windows, so the ordinary Windows uninstaller works:
 
-The command line equivalents are `WinExplorer.exe --uninstall-context-menu` and
-`WinExplorer.exe --uninstall-startup`; they only remove keys under `HKCU` and restore the
-folder handler that was in place before WinExplorer was installed.
+- **Settings → Apps → Installed apps → WinExplorer → Uninstall**, or
+- **Start Menu → WinExplorer → Uninstall WinExplorer**, or
+- double-click **`Uninstall.cmd`** in `%LOCALAPPDATA%\Programs\WinExplorer`.
+
+The uninstaller stops WinExplorer and removes the startup entry, the folder right-click
+menu, the default folder handler (restoring the one that was there before), the Start Menu
+shortcuts, the entry in **Installed apps** and the application folder. It then asks whether
+to delete `%APPDATA%\WinExplorer` (settings and log) and keeps it by default, so a later
+reinstall keeps your configuration.
+
+Unattended uninstall:
+
+```powershell
+Uninstall.cmd -Quiet -KeepSettings     # remove the app, keep settings
+Uninstall.cmd -Quiet -RemoveSettings   # remove everything
+```
+
+If you installed with `WinExplorer-<version>-setup.exe`, its uninstaller does the same and
+is listed in **Settings → Apps** too.
+
+The individual integration points can also be removed from the command line:
+`WinExplorer.exe --uninstall-context-menu` and `WinExplorer.exe --uninstall-startup`. They
+only touch `HKCU` and restore the folder handler that was in place before WinExplorer was
+installed.
 
 No files outside your user profile are touched.
 
@@ -276,6 +339,8 @@ commands are used, how tabs are addressed, how duplicates are detected) and
 ## Project layout
 
 ```
+Install.cmd        double-click installer (runs scripts\install-app.ps1)
+Uninstall.cmd      double-click uninstaller (also registered in Settings > Apps)
 src/WinExplorer/
   Core/            settings, command line, shortcuts, path normalisation (no Win32)
   Interop/         P/Invoke declarations, MSAA + IShellFolder interfaces
@@ -284,7 +349,8 @@ src/WinExplorer/
   Services/        policy (open/switch/merge), watcher, IPC, registry, tray, logging
   UI/              WPF settings window
 tests/             xUnit tests for the core
-scripts/           build, publish, install and installer helpers
+scripts/           build, publish, install (install-app.ps1), uninstall
+                   (uninstall-app.ps1) and installer helpers
 installer/         Inno Setup script (per-user setup executable)
 docs/              architecture and manual test checklist
 assets/            icon artwork (generated by tools/make-icon.py)

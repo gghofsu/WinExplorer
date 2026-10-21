@@ -22,6 +22,21 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Check PowerShell syntax
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in Get-ChildItem scripts -Filter *.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName, [ref]$null, [ref]$errors) | Out-Null
+            foreach ($error in $errors) {
+              Write-Host "::error file=$($file.FullName),line=$($error.Extent.StartLineNumber)::$($error.Message)"
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+
       - name: Restore
         run: dotnet restore WinExplorer.sln
 
@@ -50,6 +65,16 @@ jobs:
           $version = (Get-Content src/WinExplorer/WinExplorer.csproj |
             Select-String -Pattern '<Version>(.*)</Version>').Matches[0].Groups[1].Value
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+
+          # Include the double-click installer/uninstaller in both zips.
+          foreach ($dir in @('publish/framework-dependent', 'publish/self-contained')) {
+            Copy-Item 'Install.cmd' $dir -Force
+            Copy-Item 'Uninstall.cmd' $dir -Force
+            New-Item -ItemType Directory -Force -Path "$dir/scripts" | Out-Null
+            Copy-Item 'scripts/install-app.ps1' "$dir/scripts" -Force
+            Copy-Item 'scripts/uninstall-app.ps1' "$dir/scripts" -Force
+          }
+
           Compress-Archive -Path 'publish/framework-dependent/*' -DestinationPath "artifacts/WinExplorer-$version-win-x64.zip"
           Compress-Archive -Path 'publish/self-contained/*' -DestinationPath "artifacts/WinExplorer-$version-win-x64-selfcontained.zip"
 

@@ -54,6 +54,8 @@ OutputBaseFilename={#AppName}-{#AppVersion}-setup
 SetupIconFile=..\src\WinExplorer\Assets\app.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
+; Registered under HKCU, so Windows Settings > Apps lists it for the current user and its
+; uninstaller needs no administrator rights either.
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -69,7 +71,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "startup"; Description: "Start {#AppName} when I sign in"; GroupDescription: "Windows integration:"; Flags: checkedonce
-Name: "contextmenu"; Description: "Add ""Open in {#AppName} tab"" to the folder right-click menu"; GroupDescription: "Windows integration:"; Flags: checkedonce
+Name: "contextmenu"; Description: "Integrate with File Explorer (right-click menu and folders open as tabs)"; GroupDescription: "Windows integration:"; Flags: checkedonce
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
 [Files]
@@ -81,9 +83,12 @@ Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
-; --install-startup / --install-context-menu only touch HKCU and exit immediately.
+; These switches only touch HKCU and exit immediately. The "not <task>" entries make the
+; checkboxes real add/remove options when Setup is run over an existing installation.
 Filename: "{app}\{#AppExe}"; Parameters: "--install-startup"; Flags: runhidden waituntilterminated; Tasks: startup
+Filename: "{app}\{#AppExe}"; Parameters: "--uninstall-startup"; Flags: runhidden waituntilterminated; Tasks: not startup
 Filename: "{app}\{#AppExe}"; Parameters: "--install-context-menu"; Flags: runhidden waituntilterminated; Tasks: contextmenu
+Filename: "{app}\{#AppExe}"; Parameters: "--uninstall-context-menu"; Flags: runhidden waituntilterminated; Tasks: not contextmenu
 Filename: "{app}\{#AppExe}"; Description: "Start {#AppName} now"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
@@ -109,4 +114,22 @@ begin
   else if (GetWindowsVersion < $0A000000) then
     MsgBox('WinExplorer is designed for Windows 11. It will install, but folder ' +
            'tabs are only available on Windows 11 22H2 or newer.', mbInformation, MB_OK);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  DataDir: string;
+begin
+  { Settings live outside {app}, so they survive an uninstall unless the user says
+    otherwise. Ask once, after the program files are gone. }
+  if CurUninstallStep = usPostUninstall then
+  begin
+    DataDir := ExpandConstant('{userappdata}\WinExplorer');
+    if DirExists(DataDir) and not UninstallSilent then
+    begin
+      if MsgBox('Do you also want to delete your WinExplorer settings and log?' +
+                #13#10 + #13#10 + DataDir, mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+        DelTree(DataDir, True, True, True);
+    end;
+  end;
 end;

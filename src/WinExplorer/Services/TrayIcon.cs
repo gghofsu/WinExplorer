@@ -9,11 +9,12 @@ internal sealed class TrayIcon : IDisposable
 {
     private readonly NotifyIcon _icon;
     private readonly ToolStripMenuItem _pauseItem;
+    private readonly ToolStripMenuItem _startupItem;
     private readonly Logger _log;
     private bool _disposed;
 
-    public TrayIcon(Logger log, Action openSettings, Action toggleEnabled, Action duplicateTab,
-        Action reopenClosed, Action openLog, Action exit)
+    public TrayIcon(Logger log, Func<bool> isStartupEnabled, Action openSettings, Action toggleEnabled,
+        Action toggleStartup, Action duplicateTab, Action reopenClosed, Action openLog, Action exit)
     {
         _log = log;
 
@@ -22,13 +23,26 @@ internal sealed class TrayIcon : IDisposable
             CheckOnClick = false
         };
 
+        // One click adds or removes the Run entry, without opening the settings window.
+        _startupItem = new ToolStripMenuItem("Start with Windows", null, (_, _) => toggleStartup())
+        {
+            CheckOnClick = false,
+            Checked = isStartupEnabled()
+        };
+
         var menu = new ContextMenuStrip();
+
+        // The entry can also change outside this menu (settings window, command line), so
+        // re-read it every time the menu opens instead of caching it.
+        menu.Opening += (_, _) => _startupItem.Checked = isStartupEnabled();
         menu.Items.Add(new ToolStripMenuItem("WinExplorer settings…", null, (_, _) => openSettings())
         {
             Font = new Font(menu.Font, System.Drawing.FontStyle.Bold)
         });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_pauseItem);
+        menu.Items.Add(_startupItem);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Duplicate active tab", null, (_, _) => duplicateTab()));
         menu.Items.Add(new ToolStripMenuItem("Reopen closed folder", null, (_, _) => reopenClosed()));
         menu.Items.Add(new ToolStripSeparator());
@@ -60,6 +74,12 @@ internal sealed class TrayIcon : IDisposable
         }
 
         return SystemIcons.Application;
+    }
+
+    /// <summary>Reflects the current <c>HKCU ...\Run</c> entry in the menu.</summary>
+    public void UpdateStartupState(bool enabled)
+    {
+        _startupItem.Checked = enabled;
     }
 
     public void UpdateState(bool enabled)

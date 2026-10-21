@@ -64,6 +64,7 @@ public partial class App : Application
             case CommandKind.UninstallContextMenu:
             case CommandKind.InstallStartup:
             case CommandKind.UninstallStartup:
+            case CommandKind.ToggleStartup:
             case CommandKind.ShowLog:
                 RunLocalCommand(options);
                 Shutdown(0);
@@ -96,6 +97,7 @@ public partial class App : Application
         _runtime.SettingsChanged += (_, settings) => Dispatcher.BeginInvoke(() =>
         {
             _tray?.UpdateState(settings.Enabled);
+            _tray?.UpdateStartupState(settings.StartWithWindows);
             _viewModel?.RefreshFromSettings();
         });
 
@@ -163,16 +165,39 @@ public partial class App : Application
 
     private TrayIcon CreateTrayIcon() => new(
         _log!,
+        isStartupEnabled: () => _runtime!.Startup.IsEnabled(),
         openSettings: () => Dispatcher.BeginInvoke(ShowSettingsWindow),
         toggleEnabled: () =>
         {
             var enabled = _runtime!.ToggleEnabled();
             Dispatcher.BeginInvoke(() => _tray?.UpdateState(enabled));
         },
+        toggleStartup: () => Dispatcher.BeginInvoke(ToggleStartup),
         duplicateTab: () => _ = _runtime!.DuplicateActiveTabAsync(),
         reopenClosed: () => _ = _runtime!.ReopenLastClosedAsync(),
         openLog: OpenLog,
         exit: () => Dispatcher.BeginInvoke(ExitApplication));
+
+    /// <summary>Adds or removes the "start when I sign in" entry from the tray menu.</summary>
+    private void ToggleStartup()
+    {
+        var startup = _runtime!.Startup;
+        var enabled = !startup.IsEnabled();
+
+        if (!startup.SetEnabled(enabled))
+        {
+            MessageBox.Show(
+                "Windows would not let WinExplorer change the startup entry.\n\n" +
+                "The registry key is HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run.",
+                "WinExplorer", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        _runtime.Settings.StartWithWindows = enabled;
+        _store!.Save(_runtime.Settings);
+        _tray?.UpdateStartupState(enabled);
+        _viewModel?.RefreshFromSettings();
+    }
 
     /// <summary>Keeps the registry in sync with what settings.json claims.</summary>
     private void SyncIntegrationState()
@@ -251,6 +276,20 @@ public partial class App : Application
                 _store.Save(settings);
                 ConsoleHelper.WriteLine(ok
                     ? "WinExplorer will no longer start with Windows."
+                    : "Windows would not let WinExplorer change the startup entry.");
+                break;
+            }
+
+            case CommandKind.ToggleStartup:
+            {
+                var enabled = !startup.IsEnabled();
+                var ok = startup.SetEnabled(enabled);
+                settings.StartWithWindows = ok && enabled;
+                _store.Save(settings);
+                ConsoleHelper.WriteLine(ok
+                    ? (enabled
+                        ? "WinExplorer will start with Windows."
+                        : "WinExplorer will no longer start with Windows.")
                     : "Windows would not let WinExplorer change the startup entry.");
                 break;
             }

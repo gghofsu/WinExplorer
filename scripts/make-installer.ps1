@@ -32,6 +32,12 @@ $publishDir = Join-Path $OutputDirectory $target
 Write-Host "Publishing $version ($target)" -ForegroundColor Cyan
 $selfContainedArg = $SelfContained.IsPresent.ToString().ToLowerInvariant()
 
+# Start from an empty folder: a previous publish (or a release zip built by publish.ps1)
+# may have left Install.cmd/scripts behind, and the setup is the installer in this case.
+if (Test-Path $publishDir) {
+    Remove-Item $publishDir -Recurse -Force
+}
+
 dotnet publish $project -c Release -r win-x64 `
     --self-contained $selfContainedArg `
     -p:PublishSingleFile=true `

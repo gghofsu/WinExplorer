@@ -92,6 +92,8 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
       starts the helper.
 - [ ] `scripts\make-installer.ps1` (or `ISCC.exe installer\WinExplorer.iss`) produces
       `installer\Output\WinExplorer-<version>-setup.exe`.
+- [ ] The release zip contains `Install.cmd`, `Uninstall.cmd`, `scripts\install-app.ps1`
+      and `scripts\uninstall-app.ps1`.
 - [ ] Install from the setup with both integration tasks ticked → context menu and startup
       entry exist; the app starts.
 - [ ] Uninstall from *Apps & features* → both integration tasks are undone, the previous
@@ -101,6 +103,41 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
       Explorer to close the app, updates the files and leaves `%APPDATA%\WinExplorer` alone.
 - [ ] Start WinExplorer a second time → the settings window of the running instance appears
       (no second tray icon).
+
+### Double-click installer (`Install.cmd`)
+
+- [ ] Unpack an up-to-date release zip in a fresh folder and double-click `Install.cmd`.
+      The console shows the detected payload and version, then both questions.
+- [ ] Answer **yes** to both → `%LOCALAPPDATA%\Programs\WinExplorer` exists, the Run entry
+      exists, the folder right-click menu appears, a Start Menu folder with *WinExplorer*
+      and *Uninstall WinExplorer* exists, and the app is running.
+- [ ] *Settings → Apps → Installed apps* lists **WinExplorer** with its version and icon.
+- [ ] Run `Install.cmd -NoStartup -NoLaunch` over the existing install while the app runs →
+      the running app is stopped and restarted only when `-NoLaunch` is absent, the startup
+      entry is removed, and the settings in `%APPDATA%\WinExplorer` are untouched.
+- [ ] `Install.cmd -Quiet` asks nothing and finishes with exit code 0
+      (`echo %ERRORLEVEL%`).
+- [ ] In a source checkout without `dotnet` on PATH the installer explains what is missing
+      instead of failing silently.
+- [ ] After the install, delete the original zip → `Uninstall.cmd` still works.
+
+### Uninstaller (`Uninstall.cmd` and Windows)
+
+- [ ] Tray menu → *Start with Windows* toggles the Run entry (checkmark follows); while the
+      app is running, the settings window checkbox shows the same state.
+- [ ] `WinExplorer.exe --toggle-startup` flips it from a console, and
+      `--install-startup` / `--uninstall-startup` set it explicitly.
+- [ ] Double-click the Start Menu **Uninstall WinExplorer** shortcut → confirmation, then the
+      app stops, the context menu disappears, the previous folder handler is restored, the
+      startup entry is gone, both shortcuts are gone and the app folder is deleted.
+- [ ] *Settings → Apps → Installed apps → WinExplorer → Uninstall* does the same (this uses
+      the registry `UninstallString`; no console window stays open).
+- [ ] Answer **yes** to the settings question → `%APPDATA%\WinExplorer` is gone. Answer
+      **no** → settings survive, and reinstalling keeps them.
+- [ ] `Uninstall.cmd -Quiet -RemoveSettings` runs without a prompt and removes everything
+      (exit code 0).
+- [ ] Running `Uninstall.cmd` twice does not fail; the second run says WinExplorer is not
+      installed.
 - [ ] Restart Explorer (`explorer.exe` kill) → WinExplorer keeps running and tabs work again
       afterwards.
 
