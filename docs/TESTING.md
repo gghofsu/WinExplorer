@@ -117,8 +117,17 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
       entry is removed, and the settings in `%APPDATA%\WinExplorer` are untouched.
 - [ ] `Install.cmd -Quiet` asks nothing and finishes with exit code 0
       (`echo %ERRORLEVEL%`).
-- [ ] In a source checkout without `dotnet` on PATH the installer explains what is missing
-      instead of failing silently.
+- [ ] Run `Install.cmd` from GitHub's *Download ZIP* of the source (no `WinExplorer.exe`,
+      no .NET SDK):
+  - with a published release → it offers to download the latest build and installs it;
+  - with no published release → it says no release exists, then offers to install the
+    .NET 8 SDK with `winget` and builds;
+  - with neither (`-NoDownload`, no winget) → it prints the three/four options and exits 1
+    instead of failing silently.
+- [ ] `Install.cmd -NoDownload` in a source checkout with the .NET 8 SDK → builds and installs.
+- [ ] `Install.cmd -Source <folder with WinExplorer.exe>` → installs from that folder.
+- [ ] After installing from a downloaded release, `WinExplorer.exe` starts without a
+      SmartScreen prompt (the mark of the web is stripped from the install folder).
 - [ ] After the install, delete the original zip → `Uninstall.cmd` still works.
 
 ### Uninstaller (`Uninstall.cmd` and Windows)

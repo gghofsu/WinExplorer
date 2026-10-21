@@ -93,6 +93,9 @@ own profile is changed.
    - `WinExplorer-<version>-win-x64-selfcontained.zip` — needs nothing else installed, or
    - `WinExplorer-<version>-win-x64.zip` — smaller, needs the
      [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).
+     If no release has been published yet, take a build from **Actions → build → latest
+     run → Artifacts → WinExplorer** instead (it has the same zip layout), or run
+     `Install.cmd` from the source code and let it build.
 2. Unpack it anywhere.
 3. Double-click **`Install.cmd`** in the unpacked folder.
 4. Answer the two questions (Enter accepts the default):
@@ -109,7 +112,17 @@ That is the whole installation. The script copies the app to
 starts WinExplorer. `Install.cmd` and `Uninstall.cmd` are copied along with the app, so you
 can repair or uninstall later without keeping the original zip.
 
-Run from a source checkout, `Install.cmd` builds the app first (it needs the .NET 8 SDK).
+Run from a source checkout (GitHub's *Download ZIP* has no compiled program in it),
+`Install.cmd` picks the program up by itself:
+
+1. an existing build in the folder (`publish\`, `artifacts\`, `bin\`) — used as-is;
+2. otherwise, with the .NET 8 SDK installed, the app is built from the sources;
+3. otherwise the latest pre-built release is downloaded from GitHub (about 100 MB,
+   `-NoDownload` turns this off);
+4. otherwise the installer offers to install the .NET 8 SDK with `winget` and then builds.
+
+If none of that is possible it prints exactly what to download or install. `-Source <folder>`
+always works when you already have a folder containing `WinExplorer.exe`.
 
 #### Installer options
 
@@ -122,6 +135,8 @@ Anything after `Install.cmd` is passed on to `scripts\install-app.ps1`:
 | `Install.cmd -Quiet -NoLaunch` | unattended install with the defaults |
 | `Install.cmd -Destination D:\Apps\WinExplorer` | install into a different folder |
 | `Install.cmd -Source <folder>` | install from another folder that holds `WinExplorer.exe` |
+| `Install.cmd -NoDownload` | never download a release; build from source instead |
+| `Install.cmd -InstallSdk` | allow `winget` to install the .NET 8 SDK unattended, then build |
 
 `-Quiet` never asks; startup and the File Explorer integration are both enabled unless you
 add `-NoStartup` or `-NoContextMenu`.
@@ -270,6 +285,10 @@ All three can be changed in the **Shortcuts** tab.
   is on. Hold `Ctrl+Shift` while opening, or turn the option off.
 - **Tabs do not work at all** — tabs need Windows 11 22H2+. On older builds folders fall
   back to windows and the log says so.
+- **`Install.cmd` says "No WinExplorer.exe was found"** — you are in the source code ZIP,
+  which has no compiled program. Let the installer download a build (answer *yes* to the
+  download question), install the .NET 8 SDK so it can build one, or run it from an unpacked
+  release zip / CI artifact.
 - **Nothing happens at all** — make sure only one WinExplorer is running (tray icon), then
   check `%APPDATA%\WinExplorer\WinExplorer.log` (tray menu → *Open log file*). The log
   records every tab command and every fallback with timestamps.
