@@ -111,7 +111,7 @@ internal sealed class ExplorerWatcher : IDisposable
                 return;
 
             // Run off the hook callback: the merge waits for Explorer to catch up.
-            ThreadPool.QueueUserWorkItem(async _ =>
+            ThreadPool.QueueUserWorkItem(async state =>
             {
                 try
                 {

@@ -44,7 +44,7 @@ internal static class ExplorerWindows
         if (windowHwnd == 0)
             return tabs;
 
-        var current = 0;
+        nint current = 0;
         while (true)
         {
             current = NativeMethods.FindWindowEx(windowHwnd, current, NativeMethods.ExplorerTabClass, null);

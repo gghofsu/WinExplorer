@@ -1,4 +1,5 @@
 using WinExplorer.Core;
+using WinExplorer.Hooks;
 using WinExplorer.Interop;
 using WinExplorer.Shell;
 
