@@ -364,6 +364,56 @@ internal sealed class TabController : IDisposable
     public Task<string?> GetActiveLocationAsync(nint windowHwnd, CancellationToken cancellationToken = default) =>
         _querySta.RunWithTimeoutAsync<string?>(() => ShellCom.GetActiveTabLocation(windowHwnd), null, 2500);
 
+    /// <summary>
+    /// The folder of every tab of <paramref name="windowHwnd"/>, in tab order.
+    /// </summary>
+    /// <remarks>
+    /// Shells that report one entry *per window* can only describe the tab that is showing,
+    /// so a background tab is temporarily activated to read it - the window is about to be
+    /// folded away, and the tab that was active is restored afterwards.
+    /// </remarks>
+    public async Task<List<string>> GetTabLocationsAsync(nint windowHwnd, CancellationToken cancellationToken = default)
+    {
+        var locations = new List<string>();
+        var tabs = ExplorerWindows.GetTabs(windowHwnd);
+        if (tabs.Count == 0)
+            return locations;
+
+        var originalActive = tabs[0];
+
+        foreach (var tab in tabs)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return locations;
+
+            var location = await GetTabLocationAsync(tab, cancellationToken).ConfigureAwait(false);
+
+            if (string.IsNullOrEmpty(location) && tabs.Count > 1)
+            {
+                // Make it the active tab, then ask again (the shell now describes this tab).
+                if (await SelectTabAsync(windowHwnd, tab, activateWindow: false, cancellationToken)
+                        .ConfigureAwait(false))
+                {
+                    await Task.Delay(120, cancellationToken).ConfigureAwait(false);
+                    ShellCom.InvalidateMemo();
+                    location = await GetTabLocationAsync(tab, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            locations.Add(location ?? string.Empty);
+        }
+
+        // Leave the window as the user had it.
+        if (originalActive != 0 && NativeMethods.IsWindow(originalActive) &&
+            ExplorerWindows.GetActiveTab(windowHwnd) != originalActive)
+        {
+            await SelectTabAsync(windowHwnd, originalActive, activateWindow: false, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return locations;
+    }
+
     /// <summary>Runs a shell query on the dedicated STA thread (abandoned if the shell hangs).</summary>
     public Task<T> RunOnQueryThreadAsync<T>(Func<T> func) =>
         _querySta.RunWithTimeoutAsync(func, default!, 4000);

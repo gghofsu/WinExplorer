@@ -120,6 +120,89 @@ internal static class ShellWindowsQuery
         return result;
     }
 
+    /// <summary>
+    /// Shows <paramref name="location"/> in <paramref name="tabHwnd"/> - or, when the shell
+    /// reports the tab through its window, in that window's active tab (which is exactly the
+    /// tab that was just created with Ctrl+T).
+    /// </summary>
+    /// <returns>True when the shell accepted the navigation.</returns>
+    public static bool Navigate(nint tabHwnd, string location)
+    {
+        if (tabHwnd == 0 || string.IsNullOrWhiteSpace(location))
+            return false;
+
+        object? raw = null;
+        try
+        {
+            raw = new ShellWindowsClass();
+            var typed = raw as IShellWindows;
+            var count = typed is not null
+                ? (typed.get_Count(out var c) == 0 ? c : 0)
+                : ToInt(Read(raw, "Count", out _));
+
+            var targetWindow = ParentWindowOf(tabHwnd);
+
+            for (var i = 0; i < count; i++)
+            {
+                object? window = null;
+                try
+                {
+                    if (typed is not null)
+                        typed.Item(i, out window);
+                    else
+                        window = Read(raw, "Item", out _, i);
+
+                    if (window is null)
+                        continue;
+
+                    var entryHandle = (nint)ToLong(Read(window, "HWND", out _));
+                    if (entryHandle == 0)
+                        continue;
+
+                    var matches = entryHandle == tabHwnd ||
+                                  ParentWindowOf(entryHandle) == tabHwnd ||
+                                  (targetWindow != 0 && entryHandle == targetWindow) ||
+                                  ParentWindowOf(tabHwnd) == entryHandle;
+
+                    if (!matches)
+                        continue;
+
+                    if (window.GetType().InvokeMember("Navigate2", BindingFlags.InvokeMethod, null, window,
+                            new object[] { location }) is null)
+                    {
+                        // Fire and forget: Navigate2 returns nothing for a folder.
+                    }
+
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LastNavigateError = $"{Describe(ex)} (handle 0x{tabHwnd:X})";
+                }
+                finally
+                {
+                    Release(window);
+                }
+            }
+
+            if (LastNavigateError.Length == 0)
+                LastNavigateError = $"no shell entry matches 0x{tabHwnd:X}";
+        }
+        catch (Exception ex)
+        {
+            LastNavigateError = Describe(ex);
+        }
+        finally
+        {
+            Release(raw);
+        }
+
+        return false;
+    }
+
+    /// <summary>Why the last navigation attempt failed (for logs and --probe).</summary>
+    public static string LastNavigateError { get; private set; } = string.Empty;
+
     /// <summary>Reads one window's properties directly, for --probe.</summary>
     public static string ProbePropertyErrors(nint windowHwnd)
     {

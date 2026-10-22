@@ -600,53 +600,20 @@ internal sealed class ExplorerService : IDisposable
         if (IsBackingOff(window))
             return false;
 
-        var locations = new List<string>();
-        var tabs = ExplorerWindows.GetTabs(window);
+        var locations = await _tabs.GetTabLocationsAsync(window, cancellationToken).ConfigureAwait(false);
 
-        if (tabs.Count == 0)
+        var readable = locations.Where(l => !string.IsNullOrEmpty(l)).Select(PathNormalizer.Normalize).ToList();
+        var unreadable = locations.Count(l => string.IsNullOrEmpty(l));
+
+        if (unreadable > 0 || readable.Count == 0)
         {
-            // Explorer did not list the tabs (it is still starting, or the window is busy).
-            // The window itself still reports its folder, which is just as good.
-            var active = await _tabs.GetActiveLocationAsync(window, cancellationToken).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(active))
-            {
-                // Visible, but at most once a minute per window (see BackOff).
-                BackOff(window, "no folder could be read for its tab (run --probe).");
-                return false;
-            }
-
-            locations.Add(PathNormalizer.Normalize(active));
-        }
-        else
-        {
-            foreach (var tab in tabs)
-            {
-                var location = await _tabs.GetTabLocationAsync(tab, cancellationToken).ConfigureAwait(false);
-                if (string.IsNullOrEmpty(location))
-                    continue;
-
-                locations.Add(PathNormalizer.Normalize(location));
-            }
+            // A tab whose folder cannot be read cannot be recreated, and closing the window
+            // would take it with it. Postpone; the next pass tries again.
+            BackOff(window, $"{unreadable} of {locations.Count} tab(s) report no folder (run --probe).");
+            return false;
         }
 
-        if (locations.Count != (tabs.Count == 0 ? 1 : tabs.Count))
-        {
-            // Some tabs could not be read, so they could not be recreated. A single tab
-            // window still knows its folder through the window itself; anything else is
-            // postponed until Explorer reports all of its tabs.
-            if (tabs.Count <= 1 && locations.Count == 0)
-            {
-                var active = await _tabs.GetActiveLocationAsync(window, cancellationToken).ConfigureAwait(false);
-                if (!string.IsNullOrEmpty(active))
-                    locations.Add(PathNormalizer.Normalize(active));
-            }
-
-            if (locations.Count == 0 || tabs.Count > 1)
-            {
-                BackOff(window, "its tabs report no folder (run --probe).");
-                return false;
-            }
-        }
+        locations = readable;
 
         // Closing this window would take its remaining tabs with it, so leave the whole
         // window alone when any of its folders must keep normal Windows behaviour.

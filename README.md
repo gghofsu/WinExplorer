@@ -93,10 +93,13 @@ alone from then on:
   that folder is the deliberate one. A right-click on a *file*, on empty space or in another
   app does not stop anything.
 
-The folder of a tab is read from the shell automation. Three engines are tried in order,
-because which one answers depends on the Windows build: `Shell.Application` (per tab on some
-builds, per window on others), the `ShellWindows` object behind it (via its typed interface),
-and finally the window's own address bar through MSAA/UI Automation. That call runs on
+The folder of a tab is read from the shell automation. The `ShellWindows` object is asked
+first (through its typed interface); `Shell.Application` and the window's own address bar
+(MSAA/UI Automation) are the fallbacks, because which engine answers depends on the Windows
+build. Some builds report one entry *per window* instead of one per tab; such an entry
+describes the tab that is showing, so a background tab is briefly activated when its folder
+has to be known (the window is about to be folded away, and the active tab is restored
+afterwards). That call runs on
 a dedicated STA thread that dispatches messages while it waits — without that, Explorer's
 automation server answers with nothing at all, and no window could ever be compared with
 another. When the automation server still refuses to say what a tab shows, the folder is read
