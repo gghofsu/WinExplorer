@@ -448,6 +448,12 @@ internal static class NativeMethods
         [In] ref Guid interfaceId,
         [MarshalAs(UnmanagedType.Interface)] out IAccessible? accessible);
 
+    // ---- shell known folders ---------------------------------------------
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int SHGetKnownFolderPath(ref Guid folderId, uint flags, nint token,
+        out nint path);
+
     internal const uint OBJID_CLIENT = 0xFFFFFFFC;
     internal const uint OBJID_WINDOW = 0x00000000;
 

@@ -129,9 +129,13 @@ internal sealed class ExplorerService : IDisposable
             }
 
             var activate = request.Activate && (settings.ActivateNewTab || request.Mode != OpenMode.ReuseExistingTab);
-            // Duplicating a tab keeps it next to its source; everything else goes to the end.
-            var appendAtEnd = request.Origin != OpenOrigin.DuplicateTab;
-            var tab = await _tabs.OpenTabAsync(targetWindow, path, activate, appendAtEnd, cancellationToken)
+            // Home / This PC / Desktop / Downloads go in front of the other tabs, in their
+            // fixed order; everything else is appended (a duplicate stays next to its source).
+            var insertIndex = request.Origin == OpenOrigin.DuplicateTab
+                ? -1
+                : await ComputeInsertIndexAsync(targetWindow, path, settings, cancellationToken).ConfigureAwait(false);
+
+            var tab = await _tabs.OpenTabAsync(targetWindow, path, activate, insertIndex, cancellationToken)
                 .ConfigureAwait(false);
 
             if (tab is null)
@@ -188,6 +192,30 @@ internal sealed class ExplorerService : IDisposable
 
         _history.Forget(path);
         return Report(new OpenResult(OpenOutcome.OpenedNewWindow, path, window), request);
+    }
+
+    /// <summary>
+    /// Where a folder belongs in the tab strip: the number of tabs that must stay in front of
+    /// it, or -1 for "at the end".
+    /// </summary>
+    private async Task<int> ComputeInsertIndexAsync(nint window, string path, AppSettings settings,
+        CancellationToken cancellationToken)
+    {
+        if (!settings.KeepSpecialFoldersFirst || !SpecialFolders.IsSpecial(path))
+            return -1;
+
+        // The shell knows the folder of every tab without touching them, so this is cheap and
+        // does not activate anything.
+        ExplorerWindows.InvalidateCache();
+        var map = await _tabs.RunOnQueryThreadAsync(() => ExplorerWindows.GetLocationMap(maxAgeMs: 0, refresh: true))
+            .ConfigureAwait(false);
+
+        var tabs = ExplorerWindows.GetTabs(window);
+        var locations = tabs.Select(t => map.TryGetValue(t, out var entry) ? entry.Location : string.Empty);
+
+        var index = SpecialFolders.InsertionIndex(locations, path);
+        _log.Debug($"'{PathNormalizer.ToDisplayName(path)}' belongs at tab position {index}.");
+        return index;
     }
 
     private async Task<nint> ChooseTargetWindowAsync(AppSettings settings, OpenRequest request,
@@ -330,7 +358,10 @@ internal sealed class ExplorerService : IDisposable
             return false;
         }
 
-        if (settings.KeepVirtualFoldersAsWindows && PathNormalizer.IsShellNamespace(location))
+        // Home, This PC and friends belong in tabs as much as any folder does; the setting is
+        // only honoured when the strict single-window mode is off.
+        if (!settings.SingleWindowMode && settings.KeepVirtualFoldersAsWindows &&
+            PathNormalizer.IsShellNamespace(location))
         {
             _log.Debug($"Merge skipped: '{location}' is a virtual folder.");
             return false;
@@ -672,7 +703,8 @@ internal sealed class ExplorerService : IDisposable
         // Closing this window would take its remaining tabs with it, so leave the whole
         // window alone when any of its folders must keep normal Windows behaviour.
         if (locations.Any(settings.IsExcluded) ||
-            (settings.KeepVirtualFoldersAsWindows && locations.Any(PathNormalizer.IsShellNamespace)))
+            (!settings.SingleWindowMode && settings.KeepVirtualFoldersAsWindows &&
+             locations.Any(PathNormalizer.IsShellNamespace)))
         {
             BackOff(window, "a folder in it keeps normal Windows behaviour (excluded or virtual).");
             return false;

@@ -160,8 +160,15 @@
                                     </CheckBox.Style>
                                 </CheckBox>
 
-                                <CheckBox Content="Keep virtual folders (This PC, Recycle Bin, …) as windows"
+                                <CheckBox Content="Keep Home, This PC, Desktop and Downloads at the left"
+                                          IsChecked="{Binding KeepSpecialFoldersFirst, Mode=TwoWay}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,8"
+                                           Text="Those four folders are placed in front of every other tab, in that order (Home, This PC, Desktop, Downloads) - the way Explorer's own windows start at Home." />
+
+                                <CheckBox Content="Keep virtual folders (Recycle Bin, Control Panel, …) as windows"
                                           IsChecked="{Binding KeepVirtualFoldersAsWindows, Mode=TwoWay}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,8"
+                                           Text="Only applies while the single-window switch is off: with one window, Home and This PC are folded into tabs like every other folder." />
 
                                 <CheckBox Content="Use Win+E to open a tab instead of a window"
                                           IsChecked="{Binding TakeOverWinE, Mode=TwoWay}" />

@@ -30,6 +30,14 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
       focused; no new window flashes.
 - [ ] Open four folders from the desktop → the tabs appear **in the order opened**, each new
       one added at the end of the strip.
+- [ ] Open **Home** from Start with an Explorer window already open → it becomes a **tab** in
+      that window (no second window), and it is the **leftmost** tab.
+- [ ] Then open **This PC**, **Desktop** and **Downloads** (from Start / the desktop) → the
+      strip reads Home, This PC, Desktop, Downloads, then the normal folders.
+- [ ] Open a normal folder after them → it goes to the right of Downloads.
+- [ ] Open *Downloads* first, then *Home* → Home still ends up leftmost.
+- [ ] Settings → *Keep Home, This PC, Desktop and Downloads at the left* off → folders are
+      simply appended again.
 - [ ] Open a folder that is already open (desktop, Start, another app) → its tab is brought
       to the front, **no second tab for it**, and no leftover window.
 - [ ] Double-click the **same** folder again → that tab is brought to the front, the tab

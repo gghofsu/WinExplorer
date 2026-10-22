@@ -101,8 +101,13 @@ internal sealed class TabController : IDisposable
     /// returns the new tab. Returns null when Explorer did not cooperate (caller decides
     /// whether to fall back to a window).
     /// </summary>
+    /// <param name="insertIndex">
+    /// Visual position the new tab must end up at (0 = in front of everything); -1 appends it
+    /// after the last tab. Explorer itself always inserts after the current tab, so the index
+    /// is honoured by choosing the tab the Ctrl+T command is sent from.
+    /// </param>
     public async Task<ExplorerTab?> OpenTabAsync(nint windowHwnd, string location, bool activate,
-        bool appendAtEnd = true, CancellationToken cancellationToken = default)
+        int insertIndex = -1, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(location))
             return null;
@@ -123,10 +128,34 @@ internal sealed class TabController : IDisposable
             // in the background.
             var activeTab = ExplorerWindows.GetActiveTab(windowHwnd);
 
-            // Explorer inserts a new tab right after the current one. To make the folder land
-            // at the end of the strip, the last tab is made current first (Ctrl+<count>).
-            if (appendAtEnd && tabsBefore.Count > 1 && tabsBefore.Count <= 9)
+            // Explorer inserts a new tab right after the current one, so the tab the command
+            // is sent from decides where the new tab appears.
+            var frontSwapTab = 0;
+            string? frontSwapLocation = null;
+
+            if (insertIndex == 0 && tabsBefore.Count > 0)
             {
+                // Position 0 cannot be reached by inserting after a tab, so the *first* tab is
+                // taken over for the new folder and its folder moves into the new tab.
+                var first = await SelectTabByVisualIndexAsync(windowHwnd, 0, cancellationToken).ConfigureAwait(false);
+                var firstLocation = first == 0 ? null : await GetTabLocationAsync(first, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (first != 0 && !string.IsNullOrEmpty(firstLocation))
+                {
+                    frontSwapTab = first;
+                    frontSwapLocation = firstLocation;
+                }
+            }
+            else if (insertIndex > 0)
+            {
+                // Ctrl+T inserts after the current tab: make tab (insertIndex - 1) current.
+                await SelectTabByVisualIndexAsync(windowHwnd, Math.Min(insertIndex, tabsBefore.Count) - 1,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            else if (tabsBefore.Count > 1 && tabsBefore.Count <= 9)
+            {
+                // Append: make the last tab current so the new one lands after it.
                 await SelectLastTabAsync(windowHwnd, tabsBefore.Count, activeTab, cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -212,7 +241,39 @@ internal sealed class TabController : IDisposable
                 return null;
             }
 
-            var actual = await _querySta.RunWithTimeoutAsync<string?>(() => ShellCom.GetTabLocation(newTab), null, 2000)
+            if (frontSwapTab != 0 && frontSwapLocation is not null)
+            {
+                // The new tab holds what the first tab used to show; the first tab now takes
+                // the new folder (it is still at position 0).
+                var copied = await NavigateAndConfirmAsync(windowHwnd, newTab, frontSwapLocation, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (copied)
+                {
+                    await EnsureActiveTabAsync(windowHwnd, frontSwapTab, cancellationToken).ConfigureAwait(false);
+                    var moved = await NavigateAndConfirmAsync(windowHwnd, frontSwapTab, location, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (moved)
+                    {
+                        tab = tab with { TabHwnd = frontSwapTab, Location = PathNormalizer.Normalize(location) };
+                    }
+                    else
+                    {
+                        // Put the old folder back where it was; the new tab keeps the new one.
+                        await NavigateAndConfirmAsync(windowHwnd, frontSwapTab, frontSwapLocation, cancellationToken)
+                            .ConfigureAwait(false);
+                        _log.Warn($"'{PathNormalizer.ToDisplayName(location)}' could not be moved to the " +
+                                  "front of the tab strip; it stays next to the first tab.");
+                    }
+                }
+                else
+                {
+                    _log.Warn("The first tab could not be copied; the new folder stays where it is.");
+                }
+            }
+
+            var actual = await _querySta.RunWithTimeoutAsync<string?>(() => ShellCom.GetTabLocation(tab.TabHwnd), null, 2000)
                 .ConfigureAwait(false);
             tab = tab with { Location = string.IsNullOrEmpty(actual) ? PathNormalizer.Normalize(location) : actual };
 
@@ -302,6 +363,41 @@ internal sealed class TabController : IDisposable
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Selects the tab at a visual position (0-based) with Ctrl+&lt;n&gt; and returns the tab that
+    /// became active, so callers can act on it without knowing the strip order.
+    /// </summary>
+    private async Task<nint> SelectTabByVisualIndexAsync(nint windowHwnd, int index,
+        CancellationToken cancellationToken)
+    {
+        if (index < 0)
+            return 0;
+
+        var before = ExplorerWindows.GetActiveTab(windowHwnd);
+
+        try
+        {
+            NativeMethods.SendMessageTimeout(windowHwnd, NativeMethods.WM_COMMAND,
+                NativeMethods.ExplorerCommandSelectTab, (nint)(index + 1), NativeMethods.SMTO_ABORTIFHUNG, 800, out _);
+
+            var deadline = Environment.TickCount64 + 500;
+            while (Environment.TickCount64 < deadline)
+            {
+                var active = ExplorerWindows.GetActiveTab(windowHwnd);
+                if (active != 0 && active != before)
+                    return active;
+
+                await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"Could not select tab #{index + 1}: {ex.Message}");
+        }
+
+        return ExplorerWindows.GetActiveTab(windowHwnd);
     }
 
     /// <summary>

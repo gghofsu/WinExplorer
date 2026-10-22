@@ -41,6 +41,7 @@ right-click   → Open in new window        →  a separate window, because you 
 |---|---|
 | **Folders open as tabs** | Double-clicking a folder inside File Explorer adds a tab to the window you are working in instead of spawning a window. |
 | **No accidental duplicates** | Opening a folder that is already shown anywhere switches to the tab that shows it (and brings its window forward). If that switch ever fails, the app still does not open a second tab for the same folder. |
+| **Home / This PC / Desktop / Downloads first** | These four folders are always placed at the left of the tab strip, in that order (Home, This PC, Desktop, Downloads), in front of every other tab — the way Explorer's own windows start at Home. |
 | **Tabs appear at the end** | A new folder is added after the last tab, not next to the current one (Explorer's own Ctrl+T inserts after the current tab, so the app makes the last tab current first). Duplicating a tab is the one exception, and stays next to its source. |
 | **Duplicates on demand** | Only an explicit request creates a second tab for the same folder: *Open in new tab*, *Open in new window* (right-click menu), the duplicate shortcut, or `--new-tab` / `--new-window` on the command line. |
 | **Middle-click** | Middle-clicking a folder opens it in a background tab, exactly like the built-in behaviour — but it also de-duplicates. |
@@ -84,6 +85,11 @@ double-click, the desktop, Start, the taskbar, Win+E, a shortcut in another app,
 that appear anyway (a second window from an app, a window you opened before starting
 WinExplorer, a *This PC* window with virtual folders allowed) are folded in within a second
 or two: their tabs move over and the empty window is closed.
+
+Home, This PC, Desktop and Downloads are special: they always sit at the left of the strip, in
+that fixed order, ahead of normal folders. Opening one of them when it is not a tab yet puts
+its tab in front of the others; a normal folder is added at the end. Switching this off is a
+checkbox in the settings window (*Keep Home, This PC, Desktop and Downloads at the left*).
 
 Two gestures always beat that rule and produce a separate window that WinExplorer leaves
 alone from then on:
@@ -268,7 +274,8 @@ there is no Save button.
 | **Keep a single File Explorer window** | The main switch: every folder becomes a tab in the one window, and extra windows are folded in. Shift+double-click / *Open in new window* still make real windows. |
 | **Also fold windows that are already open** | Collects the windows that were open before WinExplorer started (or that you deliberately kept). |
 | **Fold other new Explorer windows into tabs** | Catches folders opened from the desktop, Start, Win+E or other apps. |
-| **Keep virtual folders as windows** | This PC, Recycle Bin, Control Panel, … stay windows. |
+| **Keep Home, This PC, Desktop and Downloads at the left** | The fixed order described above. |
+| **Keep virtual folders as windows** | Recycle Bin, Control Panel, … stay windows. Only while the single-window switch is off — with one window, Home and This PC become tabs like everything else. |
 | **Use Win+E to open a tab** | Replaces the Win+E shortcut. |
 | **Add "Open in WinExplorer tab"…** | Per-user context menu entries (`HKCU\Software\Classes\Directory\shell`). |
 | **Use WinExplorer for every folder double-click in Windows** | Makes WinExplorer the default handler for folders (so double-clicking a folder on the desktop, in a file dialog or in another app is folded in as well). Restores the previous handler when switched off. |

@@ -179,6 +179,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
         });
     }
 
+    public bool KeepSpecialFoldersFirst
+    {
+        get => _runtime.Settings.KeepSpecialFoldersFirst;
+        set => SetSetting(s => s.KeepSpecialFoldersFirst = value);
+    }
+
     public bool MergeExistingWindows
     {
         get => _runtime.Settings.MergeExistingWindows;

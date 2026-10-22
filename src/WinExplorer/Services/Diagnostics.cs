@@ -65,6 +65,9 @@ internal static class Diagnostics
         builder.AppendLine($"  Single window mode      : {settings.SingleWindowMode}");
         builder.AppendLine($"  Fold new windows        : {settings.MergeNewWindows}");
         builder.AppendLine($"  Fold existing windows   : {settings.MergeExistingWindows}");
+        builder.AppendLine($"  Special folders first  : {settings.KeepSpecialFoldersFirst}");
+        builder.AppendLine($"  Special folder paths   : Desktop='{SpecialFolders.DesktopPath()}', " +
+                           $"Downloads='{SpecialFolders.DownloadsPath()}'");
         builder.AppendLine();
         builder.AppendLine("Shell");
         builder.AppendLine("  " + Shell.ShellCom.Describe());

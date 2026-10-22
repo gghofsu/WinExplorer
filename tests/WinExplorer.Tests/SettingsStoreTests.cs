@@ -31,6 +31,7 @@ public class SettingsStoreTests : IDisposable
         Assert.True(settings.SingleWindowMode);
         Assert.True(settings.MergeNewWindows);
         Assert.True(settings.MergeExistingWindows);
+        Assert.True(settings.KeepSpecialFoldersFirst);
     }
 
     [Fact]

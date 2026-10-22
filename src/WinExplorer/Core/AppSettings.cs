@@ -69,8 +69,17 @@ public sealed class AppSettings
     /// </summary>
     public bool MergeExistingWindows { get; set; } = true;
 
-    /// <summary>Do not merge windows whose location is a virtual shell folder.</summary>
+    /// <summary>
+    /// Do not merge windows whose location is a virtual shell folder. Ignored while
+    /// <see cref="SingleWindowMode"/> is on: Home and This PC belong in tabs like any folder.
+    /// </summary>
     public bool KeepVirtualFoldersAsWindows { get; set; } = true;
+
+    /// <summary>
+    /// Keep Home, This PC, Desktop and Downloads at the left of the tab strip, in that order
+    /// (they are inserted in front of every other tab). On by default.
+    /// </summary>
+    public bool KeepSpecialFoldersFirst { get; set; } = true;
 
     /// <summary>Treat Win+E as "open a tab in the existing window".</summary>
     public bool TakeOverWinE { get; set; } = false;
@@ -117,6 +126,7 @@ public sealed class AppSettings
         MergeNewWindows = MergeNewWindows,
         MergeExistingWindows = MergeExistingWindows,
         KeepVirtualFoldersAsWindows = KeepVirtualFoldersAsWindows,
+        KeepSpecialFoldersFirst = KeepSpecialFoldersFirst,
         TakeOverWinE = TakeOverWinE,
         StartWithWindows = StartWithWindows,
         StartMinimized = StartMinimized,
