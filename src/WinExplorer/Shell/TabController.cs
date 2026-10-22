@@ -130,7 +130,7 @@ internal sealed class TabController : IDisposable
 
             // Explorer inserts a new tab right after the current one, so the tab the command
             // is sent from decides where the new tab appears.
-            var frontSwapTab = 0;
+            nint frontSwapTab = 0;
             string? frontSwapLocation = null;
 
             if (insertIndex == 0 && tabsBefore.Count > 0)
