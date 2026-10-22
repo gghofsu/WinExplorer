@@ -17,7 +17,7 @@ internal sealed class AppRuntime : IDisposable
     private readonly SettingsStore _settings;
     private readonly TabController _tabs;
     private readonly ExplorerService _service;
-    private readonly ExplorerWatcher _watcher;
+    private readonly SingleWindowEngine _watcher;
     private readonly MouseHook _mouseHook;
     private readonly KeyboardHook _keyboardHook;
     private readonly ShellIntegration _shell;
@@ -31,7 +31,7 @@ internal sealed class AppRuntime : IDisposable
         _settings = settings;
         _tabs = new TabController(log);
         _service = new ExplorerService(_tabs, settings, log);
-        _watcher = new ExplorerWatcher(log, _service, _tabs);
+        _watcher = new SingleWindowEngine(log, _service, _tabs);
         _mouseHook = new MouseHook(log, () => _settings.Current, HandleFolderClickAsync);
         _keyboardHook = new KeyboardHook(log, () => _settings.Current, OnHotkey);
         _shell = new ShellIntegration(log);

@@ -60,6 +60,17 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
 - [ ] Double-click a folder on the **desktop** → with the default-handler option on: tab in
       the existing window. Off: normal window (or folded in, if window folding is on).
 
+### A window is never left invisible
+
+- [ ] Open a folder that is on the exclusion list (Settings → excluded folders) → its window
+      appears normally, stays visible, and is not folded in.
+- [ ] Ctrl+Shift+double-click a folder, and right-click → *Open in new window* → separate
+      windows, both visible, still there after ten seconds.
+- [ ] Drag a tab out of an Explorer window → the detached window stays visible and is not
+      pulled back in.
+- [ ] With one window open, open a folder from another app while the shell is busy → either a
+      tab appears and no window is left over, or the window stays visible (never transparent).
+
 ### Duplicates on demand
 
 - [ ] Right-click a folder → *Open in new tab* → always a new tab, even when it is already

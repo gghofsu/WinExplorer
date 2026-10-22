@@ -79,6 +79,16 @@ is passed straight to Explorer, so the folder opens in its own window.
 
 ## One window, many tabs
 
+The mechanism is the one w4po/ExplorerTabUtility uses, because it is the one that holds up on
+Windows 11: WinExplorer does not try to prevent Explorer from creating a window. It watches
+for a window being **shown** (`EVENT_OBJECT_SHOW`), and the instant a `CabinetWClass` window
+appears it is made fully transparent — before any shell call, so before it is painted — then
+folded into a tab of the window that is already open and quit. A window that cannot be folded
+(excluded folder, a folder that is virtual on purpose, a gesture we did not see) is made
+visible again immediately, so nothing is ever left invisible on screen. New windows are folded
+one at a time, in arrival order, so two windows appearing together cannot race into two tabs for
+the same folder.
+
 The default is strict: **one File Explorer window**. Whatever makes a folder appear — a
 double-click, the desktop, Start, the taskbar, Win+E, a shortcut in another app, a
 `WinExplorer.exe --open` call — it lands as a tab in the window you already have. Windows
