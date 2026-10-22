@@ -52,9 +52,6 @@ internal sealed class ExplorerWatcher : IDisposable
     private readonly StaExecutor _sta;
     private readonly StaExecutor _hookSta;
 
-    /// <summary>&gt;0 while OpenAsTabAsync is creating/navigating a tab of its own.</summary>
-    private int _engineTabOps;
-
     /// <summary>Tab handles the engine created itself (so the registered-window handler
     /// does not treat them as user-created tabs). Pruned by age.</summary>
     private readonly Dictionary<nint, long> _engineCreatedTabs = new();
@@ -68,8 +65,8 @@ internal sealed class ExplorerWatcher : IDisposable
     private ComEventSubscription? _shellWindowsEvents;
     private ShellPathComparer? _comparer;
 
-    private NativeMethods.WinEventProc? _showCallback;
-    private nint _showHook;
+    private NativeMethods.WinEventProc? _windowCallback;
+    private nint _windowHook;
 
     private readonly Dictionary<nint, long> _hiddenWindows = new();
     private System.Threading.Timer? _healthTimer;
@@ -90,10 +87,9 @@ internal sealed class ExplorerWatcher : IDisposable
         _history = history;
         _sta = new StaExecutor("WinExplorer.Shell", log: log);
 
-        // The EVENT_OBJECT_SHOW hook lives on its own thread that does nothing but pump:
-        // win-event callbacks arrive as posted messages, and the shell thread is busy with
-        // COM work exactly when windows are being created - which would delay the hide
-        // until after the window painted.
+        // The CREATE/SHOW win-event hook lives on its own thread that does nothing but
+        // pump: callbacks arrive as posted messages, and the shell thread is busy with COM
+        // work exactly when windows are being created - which would delay the hide.
         _hookSta = new StaExecutor("WinExplorer.Hook", log: log);
     }
 
@@ -116,7 +112,7 @@ internal sealed class ExplorerWatcher : IDisposable
         _startedAt = Environment.TickCount64;
 
         await _sta.RunAsync(InitializeShellObjects).ConfigureAwait(false);
-        await _hookSta.RunAsync(InstallShowHook).ConfigureAwait(false);
+        await _hookSta.RunAsync(InstallWindowHook).ConfigureAwait(false);
 
         _healthTimer = new System.Threading.Timer(_ => HealthCheck(), null, 5000, 5000);
         _log.Info("Explorer watcher started.");
@@ -133,7 +129,7 @@ internal sealed class ExplorerWatcher : IDisposable
 
         try
         {
-            _hookSta.RunAsync(RemoveShowHook).Wait(2000);
+            _hookSta.RunAsync(RemoveWindowHook).Wait(2000);
         }
         catch
         {
@@ -178,31 +174,32 @@ internal sealed class ExplorerWatcher : IDisposable
     }
 
     /// <summary>
-    /// Hide brand new Explorer windows before they are painted; the registered handler
-    /// decides right after whether they become a tab or get shown again. Runs on the
-    /// dedicated hook thread, which only pumps - so the callback fires immediately.
+    /// Hide brand new Explorer windows as soon as Windows creates them; the registered
+    /// handler decides whether they become a tab or get shown again. CREATE is the earliest
+    /// useful notification, and SHOW retries the hide in case the frame was not ready yet.
+    /// Runs on the dedicated hook thread, which only pumps messages.
     /// </summary>
-    private void InstallShowHook()
+    private void InstallWindowHook()
     {
-        if (_showHook != 0)
+        if (_windowHook != 0)
             return;
 
-        _showCallback = OnWindowShown;
-        _showHook = NativeMethods.SetWinEventHook(
-            NativeMethods.EVENT_OBJECT_SHOW, NativeMethods.EVENT_OBJECT_SHOW,
-            0, _showCallback, 0, 0,
+        _windowCallback = OnExplorerWindowCreatedOrShown;
+        _windowHook = NativeMethods.SetWinEventHook(
+            NativeMethods.EVENT_OBJECT_CREATE, NativeMethods.EVENT_OBJECT_SHOW,
+            0, _windowCallback, 0, 0,
             NativeMethods.WINEVENT_OUTOFCONTEXT | NativeMethods.WINEVENT_SKIPOWNPROCESS);
     }
 
-    /// <summary>Removes the show hook. Must run on the thread that installed it.</summary>
-    private void RemoveShowHook()
+    /// <summary>Removes the window hook. Must run on the thread that installed it.</summary>
+    private void RemoveWindowHook()
     {
-        if (_showHook != 0)
+        if (_windowHook != 0)
         {
-            NativeMethods.UnhookWinEvent(_showHook);
-            _showHook = 0;
+            NativeMethods.UnhookWinEvent(_windowHook);
+            _windowHook = 0;
         }
-        _showCallback = null;
+        _windowCallback = null;
     }
 
     /// <summary>Releases the shell objects. Runs on the STA thread.</summary>
@@ -489,13 +486,15 @@ internal sealed class ExplorerWatcher : IDisposable
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// EVENT_OBJECT_SHOW: a window became visible. New Explorer windows are made invisible
-    /// right here - before they are painted - so a window that is about to become a tab
-    /// never flashes on screen. Runs on the STA thread (it pumps).
+    /// EVENT_OBJECT_CREATE is the first chance to cloak a new frame; EVENT_OBJECT_SHOW
+    /// retries if the frame was not ready at creation. Runs on the dedicated hook thread.
     /// </summary>
-    private void OnWindowShown(nint hook, uint eventType, nint hwnd, int idObject, int idChild, uint threadId, uint time)
+    private void OnExplorerWindowCreatedOrShown(nint hook, uint eventType, nint hwnd,
+        int idObject, int idChild, uint threadId, uint time)
     {
-        if (idObject != 0 || idChild != 0 || hwnd == 0 || _disposed)
+        if ((eventType != NativeMethods.EVENT_OBJECT_CREATE &&
+             eventType != NativeMethods.EVENT_OBJECT_SHOW) ||
+            idObject != 0 || idChild != 0 || hwnd == 0 || _disposed)
             return;
 
         try
@@ -751,17 +750,17 @@ internal sealed class ExplorerWatcher : IDisposable
 
     /// <summary>
     /// A new tab appeared in an existing window: Ctrl+T, a middle-clicked folder, or
-    /// "Open in new tab". Explorer leaves middle-click tabs in the background, so the tab
-    /// is brought to the front; and if it shows one of the four special folders, it is
-    /// moved to its fixed place at the left of the strip.
+    /// "Open in new tab". Explorer leaves middle-click tabs in the background, so a unique
+    /// tab is brought to the front. If its folder is already open, the redundant tab is
+    /// closed and the existing one is selected; special folders keep their fixed position.
     /// </summary>
     private async Task HandleUserCreatedTabAsync(nint frame, TabEntry entry, string location, int tabCount)
     {
         // Tabs the engine creates itself are navigated and placed by OpenAsTabAsync.
-        if (Volatile.Read(ref _engineTabOps) > 0 || IsEngineCreatedTab(entry.TabHandle))
+        // User-created tabs wait on _openLock, so an engine tab created at the same time
+        // will have been marked by the time this handler gets to inspect it.
+        if (IsEngineCreatedTab(entry.TabHandle))
             return;
-
-        var settings = Settings;
 
         await _openLock.WaitAsync().ConfigureAwait(false);
         try
@@ -769,13 +768,49 @@ internal sealed class ExplorerWatcher : IDisposable
             if (IsEngineCreatedTab(entry.TabHandle) || !NativeMethods.IsWindow(entry.TabHandle))
                 return;
 
+            // Read the shell's latest location: a tab can register while its first
+            // navigation is still completing, and duplicate detection must use its folder.
+            location = await _sta.RunWithTimeoutAsync(() =>
+            {
+                var current = ReadLocation(entry.Browser);
+                if (current.Length == 0)
+                    return entry.Location;
+
+                entry.Location = current;
+                entry.Name = ReadName(entry.Browser);
+                return current;
+            }, entry.Location, 1500).ConfigureAwait(false);
+            location = PathNormalizer.Normalize(location);
+
+            // Explorer creates the tab before we learn where it is going. If that folder
+            // already has a tab, close this just-created duplicate and select the original.
+            if (location.Length > 0)
+            {
+                var existing = await FindExistingTabAsync(location, excludeTab: entry.TabHandle)
+                    .ConfigureAwait(false);
+                if (existing is not null)
+                {
+                    // Make the just-created tab active first so Ctrl+W is routed to this
+                    // duplicate, even when Explorer initially opened it in the background.
+                    await SelectNewTabAsync(frame, entry.TabHandle).ConfigureAwait(false);
+                    entry.Folding = true;
+                    NativeMethods.SendMessage(entry.TabHandle, NativeMethods.WM_COMMAND,
+                        NativeMethods.ExplorerCommandCloseTab, 0);
+                    await SelectTabByHandleAsync(existing.Value.Frame, existing.Value.Tab)
+                        .ConfigureAwait(false);
+                    WindowAnimator.Activate(existing.Value.Frame);
+                    _history.Forget(location);
+                    _log.Info($"Closed a duplicate user-created tab for '{location}' and switched to the existing tab.");
+                    return;
+                }
+            }
+
             await SelectNewTabAsync(frame, entry.TabHandle).ConfigureAwait(false);
 
+            var settings = Settings;
             if (!settings.KeepSpecialFoldersFirst || SpecialFolders.Rank(location) is not int rank)
                 return;
 
-            // If that special folder already has a tab in this window, the left group is
-            // already in order - leave the (deliberate) duplicate where Explorer put it.
             if (FrameHasSpecialOfRank(frame, rank, excludeTab: entry.TabHandle))
                 return;
 
@@ -854,7 +889,6 @@ internal sealed class ExplorerWatcher : IDisposable
             path = ShellDefaults.GetLaunchLocation();
 
         await _openLock.WaitAsync().ConfigureAwait(false);
-        Interlocked.Increment(ref _engineTabOps);
         try
         {
             var settings = Settings;
@@ -941,7 +975,6 @@ internal sealed class ExplorerWatcher : IDisposable
         }
         finally
         {
-            Interlocked.Decrement(ref _engineTabOps);
             _openLock.Release();
         }
     }
@@ -1074,14 +1107,15 @@ internal sealed class ExplorerWatcher : IDisposable
     // ------------------------------------------------------------------
 
     /// <summary>The tab that already shows <paramref name="path"/>, or null.</summary>
-    private async Task<(nint Frame, nint Tab)?> FindExistingTabAsync(string path, nint excludeFrame)
+    private async Task<(nint Frame, nint Tab)?> FindExistingTabAsync(string path, nint excludeFrame = 0,
+        nint excludeTab = 0)
     {
         List<TabEntry> candidates;
         lock (_gate)
         {
             candidates = _entries
                 .Where(e => !e.Folding &&
-                            e.TabHandle != 0 &&
+                            e.TabHandle != 0 && e.TabHandle != excludeTab &&
                             (excludeFrame == 0 || e.FrameHandle != excludeFrame) &&
                             e.Location.Length > 0)
                 .ToList();
