@@ -118,7 +118,11 @@ internal sealed class TabController : IDisposable
             }
 
             var tabsBefore = ExplorerWindows.GetTabs(windowHwnd);
-            var activeTab = tabsBefore.FirstOrDefault();
+
+            // The tab the user is looking at: it gets the Ctrl+T command (Explorer opens the
+            // new tab next to it) and is put back in front when the new tab opens in the
+            // background.
+            var activeTab = ExplorerWindows.GetActiveTab(windowHwnd);
             var commandTarget = activeTab != 0 ? activeTab : windowHwnd;
 
             // Same command as Ctrl+T, posted to the active tab window.
