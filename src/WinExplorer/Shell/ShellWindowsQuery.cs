@@ -24,6 +24,12 @@ internal static class ShellWindowsQuery
     internal sealed record ShellItem(object Window, nint TabHwnd, nint WindowHwnd, string Location);
 
     /// <summary>The top level browser service Explorer registers (SID_STopLevelBrowser).</summary>
+    private static readonly Guid SID_StopLevelBrowser = new("4C96BE40-915C-11CF-99D3-00AA004AE837");
+
+    /// <summary>Why the last navigation attempt failed (for logs and --probe).</summary>
+    public static string LastNavigateError { get; private set; } = string.Empty;
+
+    /// <summary>The top level browser service Explorer registers (SID_STopLevelBrowser).</summary>
     private static readonly Guid SID_STopLevelBrowser = new("4C96BE40-915C-11CF-99D3-00AA004AE837");
 
     /// <summary>Enumerates every shell window item with the tab handle it belongs to.</summary>

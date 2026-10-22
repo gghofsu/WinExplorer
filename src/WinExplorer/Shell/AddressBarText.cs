@@ -137,7 +137,7 @@ internal static class AddressBarText
         try
         {
             var value = child is IAccessible nested
-                ? nested.get_accRole(null)
+                ? nested.get_accRole(Child(0))
                 : parent.get_accRole(Child(index));
             return ToInt(value);
         }
@@ -154,7 +154,7 @@ internal static class AddressBarText
 
         try
         {
-            value = child is IAccessible nested ? nested.get_accValue(null) : parent.get_accValue(Child(index));
+            value = child is IAccessible nested ? nested.get_accValue(Child(0)) : parent.get_accValue(Child(index));
         }
         catch
         {
@@ -165,7 +165,7 @@ internal static class AddressBarText
         {
             try
             {
-                name = child is IAccessible nested ? nested.get_accName(null) : parent.get_accName(Child(index));
+                name = child is IAccessible nested ? nested.get_accName(Child(0)) : parent.get_accName(Child(index));
             }
             catch
             {
