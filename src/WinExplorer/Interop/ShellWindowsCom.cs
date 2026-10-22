@@ -82,3 +82,29 @@ internal interface IShellWindows
     [PreserveSig]
     int ProcessAttachDetach(int attach);
 }
+
+/// <summary>
+/// <c>IServiceProvider</c> as implemented by the shell window objects. Asking one for the
+/// top-level shell browser is how a shell window item can be tied to the *tab* it belongs to:
+/// <c>IShellBrowser.GetWindow</c> returns the <c>ShellTabWindowClass</c> handle, while the
+/// item's own <c>HWND</c> property reports the frame window.
+/// </summary>
+[ComImport]
+[Guid("6D5140C1-7436-11CE-8034-00AA006009FA")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IServiceProviderNative
+{
+    [PreserveSig]
+    int QueryService(ref Guid guidService, ref Guid riid,
+        [MarshalAs(UnmanagedType.Interface)] out IShellBrowser? service);
+}
+
+/// <summary><c>IShellBrowser</c> - only its first method is needed.</summary>
+[ComImport]
+[Guid("000214E2-0000-0000-C000-000000000046")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IShellBrowser
+{
+    [PreserveSig]
+    int GetWindow(out nint hwnd);
+}

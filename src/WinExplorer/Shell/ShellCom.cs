@@ -204,6 +204,9 @@ internal static class ShellCom
         return result;
     }
 
+    /// <summary>Every shell window item with its tab handle, for --probe.</summary>
+    public static List<string> DescribeItems() => ShellWindowsQuery.Describe();
+
     /// <summary>Which automation engine produced the last answer (for --probe).</summary>
     public static string LastEngine { get; private set; } = "none";
 
@@ -220,6 +223,7 @@ internal static class ShellCom
         var answer = AutomationAnswered ? $"answered via {LastEngine}" : "no data";
         var error = LastError.Length == 0 ? "(none)" : LastError;
         var property = LastPropertyError.Length == 0 ? string.Empty : $", last failing call {LastPropertyError}";
+        property += $", last navigation {ShellWindowsQuery.DescribeLastNavigation}";
         return $"shell automation: {shell}, {answer}, {LastWindowCount} window(s), last error {error}{property}{navigate}";
     }
 
@@ -253,7 +257,7 @@ internal static class ShellCom
         // TabController.GetTabLocationsAsync.
         var window = ParentWindowOf(tabHwnd);
         var tabsOfWindow = window == 0 ? new List<nint>() : ExplorerWindows.GetTabs(window);
-        var isActiveTab = tabsOfWindow.Count > 0 && tabsOfWindow[0] == tabHwnd;
+        var isActiveTab = window != 0 && ExplorerWindows.GetActiveTab(window) == tabHwnd;
 
         if (window != 0 && (tabsOfWindow.Count <= 1 || isActiveTab))
         {
@@ -333,8 +337,8 @@ internal static class ShellCom
         if (tabHwnd == 0 || string.IsNullOrWhiteSpace(location))
             return false;
 
-        // The shell windows object is the engine that works on current builds; the
-        // automation object is the fallback for builds where it is the other way round.
+        // The shell windows object is the engine that works on current builds: it navigates
+        // the item that owns this tab, so no tab has to be activated first.
         if (ShellWindowsQuery.Navigate(tabHwnd, location))
         {
             InvalidateMemo();

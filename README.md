@@ -96,11 +96,11 @@ alone from then on:
 The folder of a tab is read from the shell automation. The `ShellWindows` object is asked
 first (through its typed interface); `Shell.Application` and the window's own address bar
 (MSAA/UI Automation) are the fallbacks, because which engine answers depends on the Windows
-build. Some builds report one entry *per window* instead of one per tab, and such an entry describes
-the tab that is **showing**. Everything that navigates therefore makes the intended tab the
-visible one first, verifies that it really is, and checks afterwards that the folder actually
-arrived - if it did not, the new tab is closed again instead of being left on *Home*. Reading
-the folder of a background tab only ever happens in a window you are not using. That call runs on
+build. A shell window item describes the frame window in its `HWND` property, so the tab it belongs
+to has to be asked of the item itself (`IServiceProvider` → `IShellBrowser.GetWindow`). With
+that handle, navigating the item moves that tab and nothing else — no tab has to be activated
+first, which is what made it flicker. Every navigation is verified afterwards; if the folder
+did not arrive, the tab is closed again instead of being left on *Home*. That call runs on
 a dedicated STA thread that dispatches messages while it waits — without that, Explorer's
 automation server answers with nothing at all, and no window could ever be compared with
 another. When the automation server still refuses to say what a tab shows, the folder is read

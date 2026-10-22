@@ -176,11 +176,8 @@ internal sealed class TabController : IDisposable
             ExplorerWindows.InvalidateCache();
             var tab = new ExplorerTab(newTab, windowHwnd, string.Empty, PathNormalizer.ToDisplayName(location));
 
-            // The shell's Navigate2 (and the address bar) act on the tab that is *showing*,
-            // and Explorer's Ctrl+T does not always activate the new tab - navigating without
-            // this step would move the folder the user was already looking at.
-            await EnsureActiveTabAsync(windowHwnd, newTab, cancellationToken).ConfigureAwait(false);
-
+            // The new tab is navigated through the shell window item that owns it, so it does
+            // not matter whether Explorer activated it or left it in the background.
             var navigated = await NavigateAndConfirmAsync(windowHwnd, newTab, location, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -189,6 +186,8 @@ internal sealed class TabController : IDisposable
                 // Leaving a tab on Home behind would be worse than no tab at all: close it
                 // and let the caller pick another route (the current tab, or a window).
                 _log.Warn($"Tab 0x{newTab:X} could not be navigated to '{location}'; closing it again.");
+
+                // Closing the right tab needs it to be the one showing.
                 await EnsureActiveTabAsync(windowHwnd, newTab, cancellationToken).ConfigureAwait(false);
                 NativeMethods.PostMessage(newTab, NativeMethods.WM_COMMAND, NativeMethods.ExplorerCommandCloseTab, 0);
                 await Task.Delay(80, cancellationToken).ConfigureAwait(false);
@@ -337,14 +336,27 @@ internal sealed class TabController : IDisposable
             if (confirmed)
                 return true;
 
-            // Make sure the tab is still the one showing; Explorer may have moved focus.
-            await EnsureActiveTabAsync(windowHwnd, tabHwnd, cancellationToken).ConfigureAwait(false);
-
             var current = await _querySta.RunWithTimeoutAsync<string?>(() => ShellCom.GetTabLocation(tabHwnd), null, 1500)
                 .ConfigureAwait(false);
 
             if (ShellCom.LocationsMatch(current, location))
                 return true;
+
+            // Second route, for builds where the item cannot be tied to a tab: activate the tab
+            // and let the shell navigate the one that is showing.
+            if (attempt == 2)
+            {
+                await EnsureActiveTabAsync(windowHwnd, tabHwnd, cancellationToken).ConfigureAwait(false);
+                await _navSta.RunWithTimeoutAsync(() => ShellCom.NavigateTab(tabHwnd, location), false, 4000)
+                    .ConfigureAwait(false);
+
+                var afterActivation = await _querySta
+                    .RunWithTimeoutAsync(() => ShellCom.WaitForLocation(tabHwnd, location, 1500), false, 2500)
+                    .ConfigureAwait(false);
+
+                if (afterActivation)
+                    return true;
+            }
         }
 
         return false;

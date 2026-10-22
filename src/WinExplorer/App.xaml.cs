@@ -747,11 +747,9 @@ public partial class App : Application
                 builder.AppendLine("Shell automation");
                 builder.AppendLine("  " + WinExplorer.Shell.ShellCom.Describe());
 
-                var direct = WinExplorer.Shell.ShellWindowsQuery.Query(out var directError);
-                builder.AppendLine($"  IShellWindows direct: {direct.Count} entr(y/ies)" +
-                                   (directError.Length == 0 ? string.Empty : $", {directError}"));
-                foreach (var (hwnd, entry) in direct)
-                    builder.AppendLine($"    0x{hwnd:X}  window 0x{entry.WindowHwnd:X}  '{entry.Location}'");
+                builder.AppendLine("  IShellWindows items (each should own one tab):");
+                foreach (var line in WinExplorer.Shell.ShellCom.DescribeItems())
+                    builder.AppendLine("  " + line);
             }
             finally
             {
