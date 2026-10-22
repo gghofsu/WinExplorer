@@ -1,3 +1,4 @@
+using System.IO;
 using WinExplorer.Core;
 using WinExplorer.Hooks;
 using WinExplorer.Interop;
@@ -16,7 +17,7 @@ internal sealed class AppRuntime : IDisposable
     private readonly SettingsStore _settings;
     private readonly TabController _tabs;
     private readonly ExplorerService _service;
-    private readonly ExplorerWatcher _watcher;
+    private readonly SingleWindowEngine _watcher;
     private readonly MouseHook _mouseHook;
     private readonly KeyboardHook _keyboardHook;
     private readonly ShellIntegration _shell;
@@ -30,7 +31,7 @@ internal sealed class AppRuntime : IDisposable
         _settings = settings;
         _tabs = new TabController(log);
         _service = new ExplorerService(_tabs, settings, log);
-        _watcher = new ExplorerWatcher(log, _service, _tabs);
+        _watcher = new SingleWindowEngine(log, _service, _tabs);
         _mouseHook = new MouseHook(log, () => _settings.Current, HandleFolderClickAsync);
         _keyboardHook = new KeyboardHook(log, () => _settings.Current, OnHotkey);
         _shell = new ShellIntegration(log);
@@ -144,6 +145,10 @@ internal sealed class AppRuntime : IDisposable
 
     public Task<OpenResult> OpenAsync(OpenRequest request, CancellationToken cancellationToken = default) =>
         _service.OpenAsync(request, cancellationToken);
+
+    /// <summary>Folds every other Explorer window into one tabbed window.</summary>
+    public Task<int> ConsolidateWindowsAsync(nint keepWindow = 0) =>
+        _service.ConsolidateWindowsAsync(keepWindow, force: true);
 
     public Task<OpenResult> DuplicateActiveTabAsync(nint window = 0, CancellationToken cancellationToken = default) =>
         _service.DuplicateActiveTabAsync(window, cancellationToken);
@@ -261,15 +266,15 @@ internal sealed class AppRuntime : IDisposable
 
         try
         {
-            var candidate = Path.Combine(currentLocation, itemName);
-            if (Directory.Exists(candidate))
-                return PathNormalizer.Normalize(candidate);
-
-            // Display names can differ in punctuation/case; match against the real entries.
+            // Display names can differ in punctuation/case; match against the real entries
+            // first so the result keeps the casing that is stored on disk.
             var match = Directory.EnumerateDirectories(currentLocation)
                 .FirstOrDefault(d => string.Equals(Path.GetFileName(d), itemName, StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
+                return PathNormalizer.Normalize(match);
 
-            return match is null ? null : PathNormalizer.Normalize(match);
+            var candidate = Path.Combine(currentLocation, itemName);
+            return Directory.Exists(candidate) ? PathNormalizer.Normalize(candidate) : null;
         }
         catch
         {
@@ -344,6 +349,16 @@ internal sealed class AppRuntime : IDisposable
 
                 case "ping":
                     return new IpcResponse { Ok = true, Outcome = "pong" };
+
+                case "consolidate":
+                {
+                    var folded = await _service.ConsolidateWindowsAsync(window).ConfigureAwait(false);
+                    return new IpcResponse
+                    {
+                        Ok = true,
+                        Outcome = folded > 0 ? $"folded {folded}" : "single window"
+                    };
+                }
 
                 default:
                     return new IpcResponse { Ok = false, Message = $"Unknown request '{request.Kind}'." };

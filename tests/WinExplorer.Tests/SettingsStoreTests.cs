@@ -1,3 +1,4 @@
+using System.IO;
 using WinExplorer.Core;
 using Xunit;
 
@@ -25,6 +26,26 @@ public class SettingsStoreTests : IDisposable
         Assert.True(settings.Enabled);
         Assert.True(settings.InterceptDoubleClick);
         Assert.Equal(AlreadyOpenBehavior.SwitchToExistingTab, settings.WhenAlreadyOpen);
+
+        // One tabbed window is the default: folders open as tabs and extra windows fold in.
+        Assert.True(settings.SingleWindowMode);
+        Assert.True(settings.MergeNewWindows);
+        Assert.True(settings.MergeExistingWindows);
+        Assert.True(settings.KeepSpecialFoldersFirst);
+    }
+
+    [Fact]
+    public void Single_window_settings_survive_a_round_trip()
+    {
+        var store = new SettingsStore(SettingsFile);
+        var settings = store.Load();
+        settings.SingleWindowMode = false;
+        settings.MergeExistingWindows = false;
+        store.Save(settings);
+
+        var reloaded = new SettingsStore(SettingsFile).Load();
+        Assert.False(reloaded.SingleWindowMode);
+        Assert.False(reloaded.MergeExistingWindows);
     }
 
     [Fact]

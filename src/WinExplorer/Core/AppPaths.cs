@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace WinExplorer.Core;
 
 /// <summary>Where WinExplorer keeps its state. Everything is per-user; no admin needed.</summary>

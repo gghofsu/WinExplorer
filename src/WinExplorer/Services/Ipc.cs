@@ -1,3 +1,4 @@
+using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
@@ -158,6 +159,13 @@ public sealed class IpcServer : IDisposable
     }
 }
 
+/// <summary>Outcome of one attempt to reach the helper, including why it failed.</summary>
+public sealed record IpcAttempt(IpcResponse? Response, string? Error)
+{
+    /// <summary>True when the helper answered (the answer itself may still be a failure).</summary>
+    public bool Answered => Response is not null;
+}
+
 /// <summary>Client used by a CLI invocation to talk to the helper.</summary>
 public static class IpcClient
 {
@@ -171,30 +179,86 @@ public static class IpcClient
     public static async Task<IpcResponse?> SendAsync(IpcRequest request, int connectTimeoutMs = 2000,
         CancellationToken cancellationToken = default)
     {
+        var attempt = await TrySendAsync(request, connectTimeoutMs, Math.Max(3000, request.TimeoutMs),
+            cancellationToken).ConfigureAwait(false);
+        return attempt.Response;
+    }
+
+    /// <summary>
+    /// Sends a request and reports *why* it failed. A short connect timeout lets callers poll
+    /// cheaply while a helper is still starting up; a long response timeout covers a busy UI.
+    /// </summary>
+    public static async Task<IpcAttempt> TrySendAsync(IpcRequest request, int connectTimeoutMs = 2000,
+        int responseTimeoutMs = 15000, CancellationToken cancellationToken = default)
+    {
+        NamedPipeClientStream? pipe = null;
         try
         {
-            await using var pipe = new NamedPipeClientStream(".", AppPaths.PipeName, PipeDirection.InOut,
+            pipe = new NamedPipeClientStream(".", AppPaths.PipeName, PipeDirection.InOut,
                 PipeOptions.Asynchronous);
 
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(connectTimeoutMs);
+            using (var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                connectTimeout.CancelAfter(Math.Max(50, connectTimeoutMs));
+                try
+                {
+                    await pipe.ConnectAsync(connectTimeout.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return cancellationToken.IsCancellationRequested
+                        ? new IpcAttempt(null, "cancelled")
+                        : new IpcAttempt(null, "no helper is listening (connect timed out)");
+                }
+                catch (TimeoutException)
+                {
+                    return new IpcAttempt(null, "no helper is listening (connect timed out)");
+                }
+                catch (IOException ex)
+                {
+                    return new IpcAttempt(null, $"the pipe could not be opened: {ex.Message}");
+                }
+            }
 
-            await pipe.ConnectAsync(timeout.Token).ConfigureAwait(false);
-
-            await using var writer = new StreamWriter(pipe, Encoding.UTF8, 4096, leaveOpen: true) { AutoFlush = true };
+            await using var writer = new StreamWriter(pipe, Encoding.UTF8, 4096, leaveOpen: true)
+            {
+                AutoFlush = true
+            };
             using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
 
             await writer.WriteLineAsync(JsonSerializer.Serialize(request, Json)).ConfigureAwait(false);
 
             using var responseTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            responseTimeout.CancelAfter(Math.Max(3000, request.TimeoutMs));
-            var line = await reader.ReadLineAsync(responseTimeout.Token).ConfigureAwait(false);
+            responseTimeout.CancelAfter(Math.Max(250, responseTimeoutMs));
 
-            return string.IsNullOrWhiteSpace(line) ? null : JsonSerializer.Deserialize<IpcResponse>(line, Json);
+            string? line;
+            try
+            {
+                line = await reader.ReadLineAsync(responseTimeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return new IpcAttempt(null, "the running instance did not answer in time");
+            }
+
+            if (string.IsNullOrWhiteSpace(line))
+                return new IpcAttempt(null, "the running instance closed the connection");
+
+            var response = JsonSerializer.Deserialize<IpcResponse>(line, Json);
+            return response is null
+                ? new IpcAttempt(null, "the running instance sent an empty reply")
+                : new IpcAttempt(response, null);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return null;
+            return new IpcAttempt(null, $"{ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            if (pipe is not null)
+            {
+                try { await pipe.DisposeAsync().ConfigureAwait(false); } catch { /* ignore */ }
+            }
         }
     }
 
@@ -211,6 +275,7 @@ public static class IpcClient
             CommandKind.Resume => "resume",
             CommandKind.Settings => "settings",
             CommandKind.Exit => "exit",
+            CommandKind.Consolidate => "consolidate",
             _ => "ping"
         },
         Path = options.Path,

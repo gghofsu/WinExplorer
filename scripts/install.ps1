@@ -40,4 +40,6 @@ Write-Host 'Starting WinExplorer' -ForegroundColor Cyan
 Start-Process -FilePath $exe
 
 Write-Host "Installed to $Destination" -ForegroundColor Green
-Write-Host 'Uninstall with: WinExplorer.exe --uninstall-context-menu; WinExplorer.exe --uninstall-startup; then delete the folder.'
+Write-Host 'This is the developer helper: it does not create the Start Menu shortcuts or the'
+Write-Host 'entry in Settings > Apps. For a normal installation use Install.cmd instead.'
+Write-Host "Uninstall with: `"$Destination\Uninstall.cmd`" (or Settings > Apps > WinExplorer)."

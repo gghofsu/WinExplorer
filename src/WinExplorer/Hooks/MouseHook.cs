@@ -47,7 +47,14 @@ internal sealed class MouseHook : IDisposable
     private bool _blockLeftUp;
     private bool _blockMiddleUp;
 
-    private static long _lastRightUpTick;
+    private static long _lastWindowGestureTick;
+
+    // The folder row that was right-clicked last inside a File Explorer file list. This is
+    // the only right-click that can mean "Open in new window", so it is the only one that
+    // may protect the next window from being folded into a tab.
+    private static readonly object _folderRightGate = new();
+    private static long _lastFolderRightUpTick;
+    private static string _lastFolderRightName = string.Empty;
 
     public MouseHook(Logger log, Func<AppSettings> settings, Func<FolderClick, Task> handler)
     {
@@ -59,9 +66,80 @@ internal sealed class MouseHook : IDisposable
 
     public bool IsRunning => _hook != 0;
 
-    /// <summary>True when the user released the right button within <paramref name="ms"/>.</summary>
-    public static bool RightButtonReleasedRecently(int ms = 1200) =>
-        _lastRightUpTick != 0 && Environment.TickCount64 - Interlocked.Read(ref _lastRightUpTick) < ms;
+    /// <summary>
+    /// True when the user recently asked for a separate window: Shift+double-click (or any
+    /// other modifier + double-click, which Windows handles itself). Windows opened during
+    /// this window are left alone by the merger, and are pinned afterwards.
+    /// </summary>
+    public static bool NewWindowGestureRecently(int ms = 3000) =>
+        _lastWindowGestureTick != 0 &&
+        Environment.TickCount64 - Interlocked.Read(ref _lastWindowGestureTick) < ms;
+
+    /// <summary>Records "the user wants a window" (used when a gesture is replayed).</summary>
+    public static void NoteNewWindowGesture() =>
+        Interlocked.Exchange(ref _lastWindowGestureTick, Environment.TickCount64);
+
+    /// <summary>
+    /// True when a folder row in a File Explorer file list was right-clicked recently. Used to
+    /// hold back the auto-folder for a moment: the context menu may still be open.
+    /// </summary>
+    public static bool FolderRightClickRecently(int ms = 2500)
+    {
+        lock (_folderRightGate)
+        {
+            return _lastFolderRightUpTick != 0 && Environment.TickCount64 - _lastFolderRightUpTick < ms;
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="location"/> is the folder that was right-clicked recently,
+    /// which is what "Open in new window" produces. Any other right-click (a file, the
+    /// desktop, another app, empty space) does not count, so a stray right-click can no
+    /// longer stop a window from being folded into a tab.
+    /// </summary>
+    public static bool FolderRightClickMatches(string? location, int ms = 20000)
+    {
+        lock (_folderRightGate)
+        {
+            if (_lastFolderRightUpTick == 0 ||
+                Environment.TickCount64 - _lastFolderRightUpTick >= ms ||
+                _lastFolderRightName.Length == 0)
+            {
+                return false;
+            }
+
+            return string.Equals(PathNormalizer.ToDisplayName(location), _lastFolderRightName,
+                StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    /// <summary>
+    /// Remembers a right-click, but only when it landed on a folder row. The accessibility
+    /// lookup runs on the thread pool: a hook callback must never wait for Explorer.
+    /// </summary>
+    private void RememberFolderRightClick(POINT point)
+    {
+        try
+        {
+            var hwnd = NativeMethods.WindowFromPoint(point);
+            if (hwnd == 0 || !AccessiblePoint.IsInsideFolderList(hwnd))
+                return;
+
+            var element = AccessiblePoint.Describe(point.X, point.Y);
+            if (element is null || element.Role != MsaaRole.ListItem || !element.IsFolderLikeItem)
+                return;
+
+            lock (_folderRightGate)
+            {
+                _lastFolderRightUpTick = Environment.TickCount64;
+                _lastFolderRightName = element.Name ?? string.Empty;
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"Right-click probe failed: {ex.Message}");
+        }
+    }
 
     public void Start()
     {
@@ -99,8 +177,11 @@ internal sealed class MouseHook : IDisposable
             switch (message)
             {
                 case NativeMethods.WM_RBUTTONUP:
-                    Interlocked.Exchange(ref _lastRightUpTick, Environment.TickCount64);
+                {
+                    var rightPoint = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam).pt;
+                    ThreadPool.QueueUserWorkItem(_ => RememberFolderRightClick(rightPoint));
                     break;
+                }
 
                 case NativeMethods.WM_LBUTTONDOWN:
                     if (OnLeftButtonDown(lParam))
@@ -156,10 +237,6 @@ internal sealed class MouseHook : IDisposable
         if (!settings.Enabled || !settings.InterceptDoubleClick)
             return false;
 
-        // Leave modified clicks (Ctrl+click, Shift+click for selection ranges, ...) alone.
-        if (NativeMethods.AnyModifierDown())
-            return false;
-
         var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
         if ((data.flags & NativeMethods.LLKHF_INJECTED) != 0)
             return false;
@@ -178,8 +255,17 @@ internal sealed class MouseHook : IDisposable
             return false;
         }
 
-        // A double-click: from here on the click belongs to us unless it is not a folder.
         _lastDownTick = 0;
+
+        // Shift+double-click (and Ctrl/Alt/Win+double-click) is the escape hatch: Windows
+        // opens the folder in its own window. Remember it so the watcher does not fold that
+        // window straight back into a tab.
+        if (NativeMethods.AnyModifierDown())
+        {
+            NoteNewWindowGesture();
+            _log.Debug("Modified double-click: leaving the window to Windows.");
+            return false;
+        }
 
         var click = Resolve(FolderClickKind.DoubleClick, lParam);
         if (click is null)

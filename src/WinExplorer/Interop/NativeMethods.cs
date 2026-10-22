@@ -371,6 +371,19 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern nint DispatchMessage(ref MSG message);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool PeekMessage(out MSG message, nint hwnd, uint minFilter, uint maxFilter, uint removeMsg);
+
+    [DllImport("user32.dll")]
+    internal static extern uint MsgWaitForMultipleObjectsEx(uint count, nint[]? handles, uint milliseconds,
+        uint wakeMask, uint flags);
+
+    internal const uint PM_REMOVE = 0x0001;
+    internal const uint PM_NOREMOVE = 0x0000;
+    internal const uint QS_ALLINPUT = 0x04FF;
+    internal const uint MWMO_INPUTAVAILABLE = 0x0004;
+
     [DllImport("user32.dll")]
     internal static extern void PostQuitMessage(int exitCode);
 
@@ -429,6 +442,17 @@ internal static class NativeMethods
     internal static extern int AccessibleObjectFromPoint(POINT point,
         [MarshalAs(UnmanagedType.Interface)] out IAccessible? accessible,
         [Out] out object? childId);
+
+    [DllImport("oleacc.dll")]
+    internal static extern int AccessibleObjectFromWindow(nint hwnd, uint objectId,
+        [In] ref Guid interfaceId,
+        [MarshalAs(UnmanagedType.Interface)] out IAccessible? accessible);
+
+    // ---- shell known folders ---------------------------------------------
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int SHGetKnownFolderPath(ref Guid folderId, uint flags, nint token,
+        out nint path);
 
     internal const uint OBJID_CLIENT = 0xFFFFFFFC;
     internal const uint OBJID_WINDOW = 0x00000000;

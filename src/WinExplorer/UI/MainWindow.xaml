@@ -122,15 +122,53 @@
 
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Text="Other ways windows appear" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="One window, many tabs" Style="{StaticResource SectionTitle}" />
+
+                                <CheckBox Content="Keep a single File Explorer window"
+                                          IsChecked="{Binding SingleWindowMode, Mode=TwoWay}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,4"
+                                           Text="Every folder becomes a tab in the window you already have, and extra windows are folded in: from the desktop, Start, the taskbar, Win+E or another app. Shift+double-click a folder, or right-click it and choose &quot;Open in new window&quot;, to get a real window - that one is never folded back." />
+
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,6,0,4"
+                                           Text="The two switches below only matter while the single-window switch is off." />
+
+                                <CheckBox Content="Also fold windows that are already open"
+                                          Margin="27,0,0,0"
+                                          IsChecked="{Binding MergeExistingWindows, Mode=TwoWay}">
+                                    <CheckBox.Style>
+                                        <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SingleWindowMode}" Value="True">
+                                                    <Setter Property="IsEnabled" Value="False" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </CheckBox.Style>
+                                </CheckBox>
 
                                 <CheckBox Content="Fold other new Explorer windows into tabs"
-                                          IsChecked="{Binding MergeNewWindows, Mode=TwoWay}" />
-                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,8"
-                                           Text="Catches folders opened from the desktop, Start, another app or Win+E. Right after a right-click the window is left alone, so &quot;Open in new window&quot; still works; hold Ctrl+Shift to force a window." />
+                                          Margin="27,0,0,0"
+                                          IsChecked="{Binding MergeNewWindows, Mode=TwoWay}">
+                                    <CheckBox.Style>
+                                        <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SingleWindowMode}" Value="True">
+                                                    <Setter Property="IsEnabled" Value="False" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </CheckBox.Style>
+                                </CheckBox>
 
-                                <CheckBox Content="Keep virtual folders (This PC, Recycle Bin, …) as windows"
+                                <CheckBox Content="Keep Home, This PC, Desktop and Downloads at the left"
+                                          IsChecked="{Binding KeepSpecialFoldersFirst, Mode=TwoWay}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,8"
+                                           Text="Those four folders are placed in front of every other tab, in that order (Home, This PC, Desktop, Downloads) - the way Explorer's own windows start at Home." />
+
+                                <CheckBox Content="Keep virtual folders (Recycle Bin, Control Panel, …) as windows"
                                           IsChecked="{Binding KeepVirtualFoldersAsWindows, Mode=TwoWay}" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,8"
+                                           Text="Only applies while the single-window switch is off: with one window, Home and This PC are folded into tabs like every other folder." />
 
                                 <CheckBox Content="Use Win+E to open a tab instead of a window"
                                           IsChecked="{Binding TakeOverWinE, Mode=TwoWay}" />

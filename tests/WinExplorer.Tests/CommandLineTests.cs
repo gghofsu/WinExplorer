@@ -81,7 +81,12 @@ public class CommandLineTests
     [InlineData("--reopen-closed", CommandKind.ReopenClosedTab)]
     [InlineData("--duplicate-tab", CommandKind.DuplicateActiveTab)]
     [InlineData("--install-context-menu", CommandKind.InstallContextMenu)]
+    [InlineData("--install-startup", CommandKind.InstallStartup)]
     [InlineData("--uninstall-startup", CommandKind.UninstallStartup)]
+    [InlineData("--toggle-startup", CommandKind.ToggleStartup)]
+    [InlineData("--single-window", CommandKind.Consolidate)]
+    [InlineData("--restart", CommandKind.Restart)]
+    [InlineData("--diagnose", CommandKind.Diagnose)]
     public void Single_word_commands_are_recognised(string arg, CommandKind expected)
     {
         Assert.Equal(expected, CommandLine.Parse(new[] { arg }).Kind);

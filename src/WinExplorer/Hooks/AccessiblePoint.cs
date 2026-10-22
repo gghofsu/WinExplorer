@@ -86,6 +86,47 @@ internal static class AccessiblePoint
     }
 
     /// <summary>
+    /// True when the window under the cursor is a folder list: the file list of an Explorer
+    /// tab, or the desktop. Used to recognise a right-click on a folder, which is the only
+    /// right-click that can mean "Open in new window".
+    /// </summary>
+    public static bool IsInsideFolderList(nint hwnd)
+    {
+        if (IsInsideFileList(hwnd))
+            return true;
+
+        if (hwnd == 0)
+            return false;
+
+        var sawView = false;
+        var current = hwnd;
+
+        for (var depth = 0; depth < 16 && current != 0; depth++)
+        {
+            var className = NativeMethods.GetClassName(current);
+
+            if (className.Equals("DirectUIHWND", StringComparison.OrdinalIgnoreCase) ||
+                className.Equals("SysListView32", StringComparison.OrdinalIgnoreCase) ||
+                className.Equals("SHELLDLL_DefView", StringComparison.OrdinalIgnoreCase))
+            {
+                sawView = true;
+            }
+
+            // The desktop list view lives under Progman/WorkerW, not under an Explorer tab.
+            if (className.Equals("Progman", StringComparison.OrdinalIgnoreCase) ||
+                className.Equals("WorkerW", StringComparison.OrdinalIgnoreCase) ||
+                className.Equals("DesktopWindow", StringComparison.OrdinalIgnoreCase))
+            {
+                return sawView;
+            }
+
+            current = NativeMethods.GetAncestor(current, NativeMethods.GA_PARENT);
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// True when the window under the cursor is inside the file list of an Explorer tab
     /// (and not in the navigation pane, the address bar, the command bar, ...).
     /// This is a pure window-hierarchy check, so it is cheap enough to run inside a hook.

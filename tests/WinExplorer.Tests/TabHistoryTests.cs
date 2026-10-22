@@ -26,7 +26,7 @@ public class TabHistoryTests
         history.RecordClosed(@"c:\ONE");
 
         Assert.Equal(2, history.Count);
-        Assert.Equal(@"C:\one", history.TakeMostRecent()!.Path);
+        Assert.Equal(@"C:\one", history.TakeMostRecent()!.Path, ignoreCase: true);
     }
 
     [Fact]

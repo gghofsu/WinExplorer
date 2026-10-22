@@ -38,6 +38,24 @@ $publishArgs = @(
 
 dotnet @publishArgs
 
+# Ship the double-click installer and uninstaller with the app, so an unpacked release can
+# be installed (and later removed) without the repository or the setup executable.
+$extras = @(
+    @{ From = 'Install.cmd'; To = 'Install.cmd' },
+    @{ From = 'Uninstall.cmd'; To = 'Uninstall.cmd' },
+    @{ From = 'scripts\install-app.ps1'; To = 'scripts\install-app.ps1' },
+    @{ From = 'scripts\uninstall-app.ps1'; To = 'scripts\uninstall-app.ps1' }
+)
+
+foreach ($extra in $extras) {
+    $from = Join-Path $root $extra.From
+    $to = Join-Path $publishDir $extra.To
+    if (Test-Path $from) {
+        New-Item -ItemType Directory -Path (Split-Path -Parent $to) -Force | Out-Null
+        Copy-Item -Path $from -Destination $to -Force
+    }
+}
+
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Compress-Archive -Path (Join-Path $publishDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
 

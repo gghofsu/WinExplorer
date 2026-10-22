@@ -22,23 +22,46 @@ namespace WinExplorer.Shell;
 /// </remarks>
 internal sealed class TabController : IDisposable
 {
-    private readonly StaExecutor _querySta = new("WinExplorer.Shell.Query");
-    private readonly StaExecutor _navSta = new("WinExplorer.Shell.Navigate");
+    private readonly StaExecutor _querySta;
+    private readonly StaExecutor _navSta;
     private readonly Logger _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<nint, long> _selfCreatedWindows = new();
-    private bool _tabsUnsupportedLogged;
 
-    public TabController(Logger log) => _log = log;
+    // Explorer refuses a tab now and then while it is busy (a folder is still loading, a
+    // dialog is open, the window just appeared). One failure must never switch tabs off for
+    // the rest of the session, so failures are counted and reset by the next success.
+    private int _consecutiveTabFailures;
+    private bool _unsupportedWarned;
+
+    public TabController(Logger log)
+    {
+        _log = log;
+
+        // The logger is passed down so a wedged shell call is visible in the log instead of
+        // silently turning every location into an empty string.
+        _querySta = new StaExecutor("WinExplorer.Shell.Query", 6000, log);
+        _navSta = new StaExecutor("WinExplorer.Shell.Navigate", 8000, log);
+    }
+
+    /// <summary>Health of the shell threads, for --diagnose / --probe.</summary>
+    public string DescribeShellHealth() =>
+        $"query thread {_querySta.ThreadName}, {_querySta.HungCalls} abandoned call(s); " +
+        $"navigate thread {_navSta.ThreadName}, {_navSta.HungCalls} abandoned call(s); " +
+        ShellCom.Describe();
 
     /// <summary>Raised with a human readable message for the UI/tray.</summary>
     public event EventHandler<string>? Activity;
 
     /// <summary>
-    /// True once Explorer refused to create a tab: tabs need Windows 11 22H2+, so on older
-    /// builds the caller should stop trying (and stop hiding windows).
+    /// True once Explorer refused to create a tab several times in a row (tabs need Windows
+    /// 11 22H2+, or this Explorer build does not answer the tab command). Callers use it to
+    /// avoid hiding windows; they still try again, because the next success clears it.
     /// </summary>
-    public bool TabsUnsupported => _tabsUnsupportedLogged;
+    public bool TabsUnsupported => _consecutiveTabFailures >= 3;
+
+    /// <summary>How often a tab was refused in a row (0 when tabs work).</summary>
+    public int ConsecutiveTabFailures => _consecutiveTabFailures;
 
     /// <summary>Windows WinExplorer opened itself; the window merger must ignore them.</summary>
     public bool IsSelfCreatedWindow(nint hwnd)
@@ -78,8 +101,13 @@ internal sealed class TabController : IDisposable
     /// returns the new tab. Returns null when Explorer did not cooperate (caller decides
     /// whether to fall back to a window).
     /// </summary>
+    /// <param name="insertIndex">
+    /// Visual position the new tab must end up at (0 = in front of everything); -1 appends it
+    /// after the last tab. Explorer itself always inserts after the current tab, so the index
+    /// is honoured by choosing the tab the Ctrl+T command is sent from.
+    /// </param>
     public async Task<ExplorerTab?> OpenTabAsync(nint windowHwnd, string location, bool activate,
-        CancellationToken cancellationToken = default)
+        int insertIndex = -1, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(location))
             return null;
@@ -95,8 +123,61 @@ internal sealed class TabController : IDisposable
             }
 
             var tabsBefore = ExplorerWindows.GetTabs(windowHwnd);
-            var activeTab = tabsBefore.FirstOrDefault();
-            var commandTarget = activeTab != 0 ? activeTab : windowHwnd;
+            var activeTab = ExplorerWindows.GetActiveTab(windowHwnd);
+
+            // Explorer inserts a new tab right after the current one. To land at a specific
+            // position the tab in front of it is made current first (one Ctrl+<n>, nothing
+            // else), and for position 0 - which cannot be inserted after anything - the first
+            // tab hands its folder to the new tab.
+            var total = tabsBefore.Count;
+            var position = insertIndex < 0 ? total : Math.Min(insertIndex, total);
+
+            nint takeOverTab = 0;
+            string? takeOverLocation = null;
+
+            if (total > 0 && position == 0)
+            {
+                // The hand-over below is only safe when the tab that was selected really is the
+                // first one; the strip titles say so when they can be read.
+                var strip = TabStripOrder.Titles(windowHwnd);
+
+                var first = await SelectTabByVisualIndexAsync(windowHwnd, 0, cancellationToken).ConfigureAwait(false);
+                var firstLocation = first == 0 ? null : await GetTabLocationAsync(first, cancellationToken)
+                    .ConfigureAwait(false);
+
+                var isFirst = first != 0 && !string.IsNullOrEmpty(firstLocation) &&
+                              (strip.Count == 0 ||
+                               string.Equals(TabStripOrder.TitleOf(firstLocation), strip[0],
+                                   StringComparison.OrdinalIgnoreCase));
+
+                if (isFirst)
+                {
+                    takeOverTab = first;
+                    takeOverLocation = firstLocation;
+                }
+                else
+                {
+                    _log.Debug($"'{PathNormalizer.ToDisplayName(location)}' cannot be placed in front; " +
+                               "adding it next to the current tab.");
+                }
+            }
+            else if (total > 0 && position > 0)
+            {
+                var before = position - 1;
+                if (before <= 8)
+                {
+                    await SelectTabByVisualIndexAsync(windowHwnd, before, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    // Beyond Ctrl+9 the strip cannot be addressed; append instead of guessing.
+                    await SelectTabByVisualIndexAsync(windowHwnd, total - 1, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            var commandTarget = ExplorerWindows.GetActiveTab(windowHwnd);
+            if (commandTarget == 0)
+                commandTarget = windowHwnd;
 
             // Same command as Ctrl+T, posted to the active tab window.
             NativeMethods.PostMessage(commandTarget, NativeMethods.WM_COMMAND, NativeMethods.ExplorerCommandNewTab, 0);
@@ -112,50 +193,121 @@ internal sealed class TabController : IDisposable
                 newTab = await WaitForNewTabAsync(windowHwnd, tabsBefore, 2000, cancellationToken).ConfigureAwait(false);
             }
 
+            if (newTab == 0 && _consecutiveTabFailures == 0)
+            {
+                // Tabs normally work, so this is a hiccup: give Explorer one more, slower try
+                // before falling back to a window.
+                _log.Warn("Explorer did not create a tab; retrying once more, slowly.");
+                await Task.Delay(600, cancellationToken).ConfigureAwait(false);
+                NativeMethods.SendMessageTimeout(windowHwnd, NativeMethods.WM_COMMAND,
+                    NativeMethods.ExplorerCommandNewTab, 0, NativeMethods.SMTO_ABORTIFHUNG, 2500, out _);
+
+                newTab = await WaitForNewTabAsync(windowHwnd, tabsBefore, 3000, cancellationToken).ConfigureAwait(false);
+            }
+
             if (newTab == 0)
             {
-                if (!_tabsUnsupportedLogged)
+                // Cap the counter: it only decides "tabs look unsupported", and a session
+                // that keeps failing must not overflow it.
+                var failures = _consecutiveTabFailures >= 100
+                    ? _consecutiveTabFailures
+                    : Interlocked.Increment(ref _consecutiveTabFailures);
+                if (failures >= 3 && !_unsupportedWarned)
                 {
-                    _tabsUnsupportedLogged = true;
-                    _log.Warn("This build of Windows did not create a tab (tabs need Windows 11 22H2 or later).");
+                    _unsupportedWarned = true;
+                    _log.Warn("Explorer keeps refusing to create tabs (tabs need Windows 11 22H2 or later).");
                 }
+                else
+                {
+                    _log.Warn($"Explorer did not create a tab (failure {failures} in a row).");
+                }
+
                 return null;
             }
+
+            Interlocked.Exchange(ref _consecutiveTabFailures, 0);
 
             ExplorerWindows.InvalidateCache();
             var tab = new ExplorerTab(newTab, windowHwnd, string.Empty, PathNormalizer.ToDisplayName(location));
 
-            var navigated = await _navSta.RunAsync(() => ShellCom.NavigateTab(newTab, location)).ConfigureAwait(false);
-            if (!navigated)
-            {
-                _log.Warn($"Tab 0x{newTab:X} was created but the shell would not navigate it to '{location}'.");
-                return tab with { Location = PathNormalizer.Normalize(location) };
-            }
+            // The new tab is navigated through the shell window item that owns it, so it does
+            // not matter whether Explorer activated it or left it in the background. When the
+            // folder has to end up first, the tab that is first now keeps its place in the strip
+            // and takes the new folder, and the new tab takes over the folder that was there.
+            var handOver = takeOverTab != 0 && takeOverLocation is not null;
+            var target = handOver ? takeOverLocation! : location;
 
-            var confirmed = await _querySta
-                .RunAsync(() => ShellCom.WaitForLocation(newTab, location, 3000))
+            var navigated = await NavigateAndConfirmAsync(windowHwnd, newTab, target, cancellationToken)
                 .ConfigureAwait(false);
 
-            var actual = await _querySta.RunAsync(() => ShellCom.GetTabLocation(newTab)).ConfigureAwait(false);
+            if (!navigated)
+            {
+                // Leaving a tab on Home behind would be worse than no tab at all: close it
+                // and let the caller pick another route (the current tab, or a window).
+                _log.Warn($"Tab 0x{newTab:X} could not be navigated to '{location}'; closing it again.");
+
+                // Closing the right tab needs it to be the one showing.
+                await EnsureActiveTabAsync(windowHwnd, newTab, cancellationToken).ConfigureAwait(false);
+                NativeMethods.PostMessage(newTab, NativeMethods.WM_COMMAND, NativeMethods.ExplorerCommandCloseTab, 0);
+                await Task.Delay(80, cancellationToken).ConfigureAwait(false);
+                ExplorerWindows.InvalidateCache();
+
+                if (activeTab != 0 && NativeMethods.IsWindow(activeTab))
+                {
+                    await SelectTabCoreAsync(windowHwnd, activeTab, activateWindow: false, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                return null;
+            }
+
+            if (handOver)
+            {
+                var moved = await NavigateAndConfirmAsync(windowHwnd, takeOverTab, location, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (moved)
+                {
+                    tab = tab with { TabHwnd = takeOverTab, Location = PathNormalizer.Normalize(location) };
+                }
+                else
+                {
+                    // Give the first tab its folder back; the new tab keeps the new folder.
+                    await NavigateAndConfirmAsync(windowHwnd, takeOverTab, takeOverLocation!, cancellationToken)
+                        .ConfigureAwait(false);
+                    _log.Warn($"'{PathNormalizer.ToDisplayName(location)}' stays behind the first tab: " +
+                              "Explorer refused to move it to the front.");
+                }
+            }
+
+            var actual = await _querySta.RunWithTimeoutAsync<string?>(() => ShellCom.GetTabLocation(tab.TabHwnd), null, 2000)
+                .ConfigureAwait(false);
             tab = tab with { Location = string.IsNullOrEmpty(actual) ? PathNormalizer.Normalize(location) : actual };
 
-            if (!confirmed)
-                _log.Warn($"Navigation of tab 0x{newTab:X} to '{location}' could not be confirmed.");
+            var frontTab = tab.TabHwnd;
+            var current = ExplorerWindows.GetActiveTab(windowHwnd);
 
             if (activate)
             {
-                await SelectTabCoreAsync(windowHwnd, newTab, activateWindow: true, cancellationToken)
-                    .ConfigureAwait(false);
+                if (current != frontTab)
+                {
+                    await SelectTabCoreAsync(windowHwnd, frontTab, activateWindow: true, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    WindowAnimator.Activate(windowHwnd);
+                }
             }
-            else if (activeTab != 0 && activeTab != newTab && NativeMethods.IsWindow(activeTab))
+            else if (activeTab != 0 && current != activeTab && NativeMethods.IsWindow(activeTab))
             {
-                // Ctrl+T also activates the new tab; put the previous one back so a
-                // background open stays in the background.
+                // A background open: put the tab the user was looking at back in front.
                 await SelectTabCoreAsync(windowHwnd, activeTab, activateWindow: false, cancellationToken)
                     .ConfigureAwait(false);
             }
 
             ExplorerWindows.InvalidateCache();
+            TabStripOrder.Invalidate(windowHwnd);
             _log.Info($"Opened tab 0x{newTab:X} in window 0x{windowHwnd:X} -> '{location}'.");
             Activity?.Invoke(this, $"Opened \"{PathNormalizer.ToDisplayName(location)}\" in a new tab.");
             return tab;
@@ -168,6 +320,44 @@ internal sealed class TabController : IDisposable
         {
             _log.Error("Opening a tab failed", ex);
             return null;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Navigates the active tab of <paramref name="windowHwnd"/> to <paramref name="location"/>.
+    /// The last resort when Explorer will not create a tab: the folder still ends up in the
+    /// window that is already open instead of in a new window.
+    /// </summary>
+    public async Task<bool> NavigateActiveTabAsync(nint windowHwnd, string location,
+        CancellationToken cancellationToken = default)
+    {
+        var tabs = ExplorerWindows.GetTabs(windowHwnd);
+        if (tabs.Count == 0)
+            return false;
+
+        var tab = tabs[0];
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var navigated = await _navSta.RunAsync(() => ShellCom.NavigateTab(tab, location))
+                .ConfigureAwait(false);
+
+            if (navigated)
+            {
+                ExplorerWindows.InvalidateCache();
+                _log.Info($"Navigated tab 0x{tab:X} of window 0x{windowHwnd:X} to '{location}'.");
+            }
+
+            return navigated;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Navigating the active tab failed", ex);
+            return false;
         }
         finally
         {
@@ -193,46 +383,148 @@ internal sealed class TabController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Selects the tab at a visual position (0-based) with one Ctrl+&lt;n&gt; and returns the tab
+    /// that became active.
+    /// </summary>
+    private async Task<nint> SelectTabByVisualIndexAsync(nint windowHwnd, int index,
+        CancellationToken cancellationToken)
+    {
+        if (index < 0 || index > 8)
+            return ExplorerWindows.GetActiveTab(windowHwnd);
+
+        var before = ExplorerWindows.GetActiveTab(windowHwnd);
+        try
+        {
+            NativeMethods.SendMessageTimeout(windowHwnd, NativeMethods.WM_COMMAND,
+                NativeMethods.ExplorerCommandSelectTab, (nint)(index + 1), NativeMethods.SMTO_ABORTIFHUNG, 800, out _);
+
+            var deadline = Environment.TickCount64 + 400;
+            while (Environment.TickCount64 < deadline)
+            {
+                var active = ExplorerWindows.GetActiveTab(windowHwnd);
+                if (active != 0 && active != before)
+                    return active;
+
+                await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"Could not select tab #{index + 1}: {ex.Message}");
+        }
+
+        return ExplorerWindows.GetActiveTab(windowHwnd);
+    }
+
+    /// <summary>
+    /// Makes <paramref name="tabHwnd"/> the tab that is showing, and waits until Explorer
+    /// agrees. Everything that navigates a tab depends on this.
+    /// </summary>
+    private async Task<bool> EnsureActiveTabAsync(nint windowHwnd, nint tabHwnd, CancellationToken cancellationToken)
+    {
+        if (ExplorerWindows.GetActiveTab(windowHwnd) == tabHwnd)
+            return true;
+
+        if (!await SelectTabCoreAsync(windowHwnd, tabHwnd, activateWindow: false, cancellationToken)
+                .ConfigureAwait(false))
+        {
+            _log.Debug($"Could not activate tab 0x{tabHwnd:X} before navigating it.");
+            return false;
+        }
+
+        return await WaitForActiveTabAsync(windowHwnd, tabHwnd, 500, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Navigates the active tab to <paramref name="location"/> and verifies it landed there.
+    /// Retries once: a brand new tab is often not registered with the shell for a moment.
+    /// </summary>
+    private async Task<bool> NavigateAndConfirmAsync(nint windowHwnd, nint tabHwnd, string location,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            var navigated = await _navSta
+                .RunWithTimeoutAsync(() => ShellCom.NavigateTab(tabHwnd, location), false, 4000)
+                .ConfigureAwait(false);
+
+            if (!navigated)
+                _log.Debug($"Navigate2 for 0x{tabHwnd:X} was refused (attempt {attempt}).");
+
+            var confirmed = await _querySta
+                .RunWithTimeoutAsync(() => ShellCom.WaitForLocation(tabHwnd, location, 2000), false, 3000)
+                .ConfigureAwait(false);
+
+            if (confirmed)
+                return true;
+
+            var current = await _querySta.RunWithTimeoutAsync<string?>(() => ShellCom.GetTabLocation(tabHwnd), null, 1500)
+                .ConfigureAwait(false);
+
+            if (ShellCom.LocationsMatch(current, location))
+                return true;
+
+            // Second route, for builds where the item cannot be tied to a tab: activate the tab
+            // and let the shell navigate the one that is showing.
+            if (attempt == 2)
+            {
+                await EnsureActiveTabAsync(windowHwnd, tabHwnd, cancellationToken).ConfigureAwait(false);
+                await _navSta.RunWithTimeoutAsync(() => ShellCom.NavigateTab(tabHwnd, location), false, 4000)
+                    .ConfigureAwait(false);
+
+                var afterActivation = await _querySta
+                    .RunWithTimeoutAsync(() => ShellCom.WaitForLocation(tabHwnd, location, 1500), false, 2500)
+                    .ConfigureAwait(false);
+
+                if (afterActivation)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>Selection without taking the gate; the caller must hold it.</summary>
     private async Task<bool> SelectTabCoreAsync(nint windowHwnd, nint tabHwnd, bool activateWindow,
         CancellationToken cancellationToken)
     {
         try
         {
-            var tabs = ExplorerWindows.GetTabs(windowHwnd);
-            if (!tabs.Contains(tabHwnd))
+            if (!ExplorerWindows.GetTabs(windowHwnd).Contains(tabHwnd))
             {
-                await Task.Delay(80, cancellationToken).ConfigureAwait(false);
-                tabs = ExplorerWindows.GetTabs(windowHwnd);
-            }
-
-            if (!tabs.Contains(tabHwnd))
-            {
-                _log.Warn($"Tab 0x{tabHwnd:X} is not part of window 0x{windowHwnd:X}.");
-                return false;
-            }
-
-            if (tabs[0] != tabHwnd)
-            {
-                // Ctrl+<n> walks the tab strip; index 1 is the first *tab window*, which is
-                // not necessarily the target, so verify after every step.
-                var maxSteps = Math.Min(tabs.Count, 32);
-                for (var i = 0; i < maxSteps; i++)
+                await Task.Delay(60, cancellationToken).ConfigureAwait(false);
+                if (!ExplorerWindows.GetTabs(windowHwnd).Contains(tabHwnd))
                 {
-                    // Guard against the crash Explorer has when the index exceeds the tab
-                    // strip while tabs are still being created.
-                    if (i + 1 > ExplorerWindows.GetTabs(windowHwnd).Count)
-                        break;
-
-                    NativeMethods.PostMessage(windowHwnd, NativeMethods.WM_COMMAND,
-                        NativeMethods.ExplorerCommandSelectTab, (nint)(i + 1));
-
-                    if (await WaitForActiveTabAsync(windowHwnd, tabHwnd, 350, cancellationToken).ConfigureAwait(false))
-                        break;
+                    _log.Warn($"Tab 0x{tabHwnd:X} is not part of window 0x{windowHwnd:X}.");
+                    return false;
                 }
             }
 
-            var selected = ExplorerWindows.GetActiveTab(windowHwnd) == tabHwnd;
+            if (ExplorerWindows.GetActiveTab(windowHwnd) != tabHwnd)
+            {
+                // One command, at the position the tab strip reports for this folder.
+                var index = await VisualIndexOfAsync(windowHwnd, tabHwnd, cancellationToken).ConfigureAwait(false);
+
+                if (index >= 0)
+                {
+                    NativeMethods.SendMessageTimeout(windowHwnd, NativeMethods.WM_COMMAND,
+                        NativeMethods.ExplorerCommandSelectTab, (nint)(index + 1),
+                        NativeMethods.SMTO_ABORTIFHUNG, 800, out _);
+                }
+                else
+                {
+                    // The strip could not be read. Rather than hopping through tabs, stop
+                    // here: the caller does not create a duplicate for an open folder.
+                    _log.Debug($"Position of tab 0x{tabHwnd:X} in the strip is unknown; not switching.");
+                    return false;
+                }
+            }
+
+            var selected = ExplorerWindows.GetActiveTab(windowHwnd) == tabHwnd ||
+                           await WaitForActiveTabAsync(windowHwnd, tabHwnd, 500, cancellationToken)
+                               .ConfigureAwait(false);
+
             if (activateWindow)
                 WindowAnimator.Activate(windowHwnd);
 
@@ -254,6 +546,26 @@ internal sealed class TabController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Position of <paramref name="tabHwnd"/> in the tab strip, or -1 when it cannot be
+    /// determined. Uses the tab titles (UIA) combined with what the shell says each tab shows.
+    /// </summary>
+    private async Task<int> VisualIndexOfAsync(nint windowHwnd, nint tabHwnd, CancellationToken cancellationToken)
+    {
+        var location = await GetTabLocationAsync(tabHwnd, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(location))
+            return -1;
+
+        var title = TabStripOrder.TitleOf(location);
+        var index = TabStripOrder.IndexOf(windowHwnd, title);
+
+        // An ambiguous title is only usable when the tabs really do show the same folder.
+        if (index < 0)
+            return -1;
+
+        return index;
+    }
+
     /// <summary>Closes a tab (Ctrl+W equivalent). Used when cleaning up duplicates.</summary>
     public async Task<bool> CloseTabAsync(nint windowHwnd, nint tabHwnd, CancellationToken cancellationToken = default)
     {
@@ -266,19 +578,41 @@ internal sealed class TabController : IDisposable
         NativeMethods.PostMessage(tabHwnd, NativeMethods.WM_COMMAND, NativeMethods.ExplorerCommandCloseTab, 0);
         await Task.Delay(120, cancellationToken).ConfigureAwait(false);
         ExplorerWindows.InvalidateCache();
+        TabStripOrder.Invalidate(windowHwnd);
         return !NativeMethods.IsWindow(tabHwnd);
     }
 
     /// <summary>Location currently shown by a tab (empty when unknown).</summary>
     public Task<string?> GetTabLocationAsync(nint tabHwnd, CancellationToken cancellationToken = default) =>
-        _querySta.RunAsync(() => ShellCom.GetTabLocation(tabHwnd));
+        _querySta.RunWithTimeoutAsync<string?>(() => ShellCom.GetTabLocation(tabHwnd), null, 2500);
 
     /// <summary>The location shown by the active tab of a window.</summary>
     public Task<string?> GetActiveLocationAsync(nint windowHwnd, CancellationToken cancellationToken = default) =>
-        _querySta.RunAsync(() => ShellCom.GetActiveTabLocation(windowHwnd));
+        _querySta.RunWithTimeoutAsync<string?>(() => ShellCom.GetActiveTabLocation(windowHwnd), null, 2500);
 
-    /// <summary>Runs a shell query on the dedicated STA thread.</summary>
-    public Task<T> RunOnQueryThreadAsync<T>(Func<T> func) => _querySta.RunAsync(func);
+    /// <summary>
+    /// The folder of every tab of <paramref name="windowHwnd"/>, in tab order. Empty strings
+    /// are tabs the shell could not describe.
+    /// </summary>
+    /// <remarks>
+    /// Each shell window item reports the folder of the tab it owns, so nothing has to be
+    /// activated here - activating tabs is what used to make the window flicker.
+    /// </remarks>
+    public async Task<List<string>> GetTabLocationsAsync(nint windowHwnd, CancellationToken cancellationToken = default)
+    {
+        var locations = new List<string>();
+        foreach (var tab in ExplorerWindows.GetTabs(windowHwnd))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            locations.Add(await GetTabLocationAsync(tab, cancellationToken).ConfigureAwait(false) ?? string.Empty);
+        }
+
+        return locations;
+    }
+
+    /// <summary>Runs a shell query on the dedicated STA thread (abandoned if the shell hangs).</summary>
+    public Task<T> RunOnQueryThreadAsync<T>(Func<T> func) =>
+        _querySta.RunWithTimeoutAsync(func, default!, 4000);
 
     /// <summary>Confirms with the shell that both locations are the same folder.</summary>
     public Task<bool> AreSameLocationAsync(string? a, string? b, CancellationToken cancellationToken = default)
@@ -286,7 +620,7 @@ internal sealed class TabController : IDisposable
         if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b))
             return Task.FromResult(false);
 
-        return _querySta.RunAsync(() => ShellCom.LocationsMatch(a, b));
+        return _querySta.RunWithTimeoutAsync(() => ShellCom.LocationsMatch(a, b), false, 3000);
     }
 
     // ------------------------------------------------------------------
@@ -403,6 +737,8 @@ internal sealed class TabController : IDisposable
         var target = tabs.Count > 0 ? tabs[0] : windowHwnd;
         NativeMethods.PostMessage(target, NativeMethods.WM_COMMAND, NativeMethods.ExplorerCommandCloseTab, 0);
         NativeMethods.PostMessage(windowHwnd, NativeMethods.WM_CLOSE, 0, 0);
+
+        TabStripOrder.Invalidate(windowHwnd);
 
         var deadline = Environment.TickCount64 + 1500;
         while (Environment.TickCount64 < deadline)

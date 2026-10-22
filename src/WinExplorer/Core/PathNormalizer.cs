@@ -44,9 +44,13 @@ public static class PathNormalizer
         if (value.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
             value = DecodeFileUrl(value);
 
-        // "shell:..." and shorthand "::{GUID}" / "{GUID}"
+        // "shell:..." and shorthand "::{GUID}" / "{GUID}". The canonical parse name has
+        // three colons, so "shell::{GUID}" gains one and "::{GUID}" gains the prefix.
         if (value.StartsWith("::", StringComparison.Ordinal))
             value = "shell:" + value;
+        else if (value.StartsWith("shell::", StringComparison.OrdinalIgnoreCase) &&
+                 !value.StartsWith("shell:::", StringComparison.OrdinalIgnoreCase))
+            value = value.Insert("shell::".Length, ":");
         else if (value.StartsWith('{') && value.EndsWith('}'))
             value = "shell:::" + value;
 

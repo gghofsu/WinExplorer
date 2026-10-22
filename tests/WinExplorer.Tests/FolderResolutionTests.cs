@@ -1,3 +1,4 @@
+using System.IO;
 using WinExplorer.Core;
 using WinExplorer.Services;
 using Xunit;
