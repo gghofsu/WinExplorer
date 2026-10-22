@@ -3,16 +3,21 @@
 **Every folder opens as a tab in the File Explorer window you already have — and opening a
 folder that is already open just switches to its tab instead of creating a duplicate.**
 
-WinExplorer is a small Windows 11 tray app that gives File Explorer the tab behaviour of a
-browser (or of Total Commander / Finder): one window, many folders, no accidental copies of
-the same folder in three different tabs.
+WinExplorer is a small Windows 11 tray app built on the mechanism of
+[w4po/ExplorerTabUtility](https://github.com/w4po/ExplorerTabUtility): whenever Windows is
+about to show a **new File Explorer window** — from the desktop, Start, the taskbar, Win+E,
+a file dialog, another app — that window is caught before it is painted and its folder is
+reopened as a **tab** of the window that is already there. One window, many folders, no
+accidental copies of the same folder in three different tabs.
 
 ```
-double-click  D:\Projects\Website        →  a new tab in the window you are using
-double-click  D:\Projects\Website  again  →  that tab is brought to the front (no duplicate)
-right-click   → Open in new tab           →  a real duplicate, because you asked for it
-right-click   → Open in new window        →  a separate window, because you asked for it
+open D:\Projects\Website from the desktop  →  a tab in the Explorer window you already have
+open D:\Projects\Website again             →  its existing tab is brought to the front
+hold Ctrl+Shift while it opens             →  a real, separate window, because you asked
 ```
+
+Double-clicking a folder *inside* an Explorer window keeps Explorer's own behaviour: it
+navigates the current tab (Ctrl+double-click opens Explorer's own new tab, as always).
 
 ---
 
@@ -39,18 +44,19 @@ right-click   → Open in new window        →  a separate window, because you 
 
 | | |
 |---|---|
-| **Folders open as tabs** | Double-clicking a folder inside File Explorer adds a tab to the window you are working in instead of spawning a window. |
-| **No accidental duplicates** | Opening a folder that is already shown anywhere switches to the tab that shows it (and brings its window forward). If that switch ever fails, the app still does not open a second tab for the same folder. |
-| **Home / This PC / Desktop / Downloads first** | These four folders are always placed at the left of the tab strip, in that order (Home, This PC, Desktop, Downloads), in front of every other tab — the way Explorer's own windows start at Home. |
-| **Tabs appear at the end** | A new folder is added after the last tab, not next to the current one (Explorer's own Ctrl+T inserts after the current tab, so the app makes the last tab current first). Duplicating a tab is the one exception, and stays next to its source. |
-| **Duplicates on demand** | Only an explicit request creates a second tab for the same folder: *Open in new tab*, *Open in new window* (right-click menu), the duplicate shortcut, or `--new-tab` / `--new-window` on the command line. |
-| **Middle-click** | Middle-clicking a folder opens it in a background tab, exactly like the built-in behaviour — but it also de-duplicates. |
-| **One window, many tabs** | While a File Explorer window is open, every folder becomes a tab in it — double-click, Start, the taskbar, Win+E, another app, and even windows that were already open. Only *Shift+double-click* or right-click → *Open in new window* creates a second window, and that window is never folded back. |
+| **New windows become tabs** | Any folder that would open a new Explorer window — the desktop, Start, the taskbar, Win+E, a file dialog, another app, the context menu, the command line — lands as a tab in the window you already have. |
+| **No accidental duplicates** | Opening a folder that is already shown in a tab switches to that tab (and brings its window forward) instead of creating a second copy. |
+| **Invisible merge** | The surplus window is cloaked by DWM before it is ever painted (from a hook thread that does nothing else), so folding a window into a tab happens without anything flashing on screen. |
+| **New tabs come to the front** | A tab opened inside Explorer with Ctrl+T, a middle-click or "Open in new tab" is selected immediately instead of staying in the background. |
+| **Home / This PC / Desktop / Downloads first** | These four folders are always placed at the left of the tab strip, in that order (Home, This PC, Desktop, Downloads), in front of every other tab — the way Explorer's own windows start at Home. This also applies when one of them is opened as a new tab inside the current window. |
+| **Duplicates on demand** | Only an explicit request creates a second tab for the same folder: the duplicate shortcut, or `--new-tab` / `--new-window` on the command line. |
+| **A window when you want one** | Hold **Ctrl+Shift** while a folder opens and the window stays a window; it is not folded back afterwards. |
+| **Collect windows into one** | The tray menu (and `--single-window`) folds every open Explorer window into one tabbed window on demand. |
 | **Duplicate / reopen shortcuts** | Global shortcuts to duplicate the current tab and to reopen the last closed folder, browser style. |
 | **Win+E as a tab** *(optional)* | Turn Win+E into "open This PC (or Home) as a tab". |
 | **One-click install and uninstall** | Double-click `Install.cmd` to install, `Uninstall.cmd` (or the entry Windows itself lists in *Settings → Apps*) to remove it. Startup is one checkbox — or one tray-menu click — either way. |
 | **Per-user only** | Lives in `HKCU`, needs no administrator rights, touches no system files, does not inject code into Explorer. |
-| **Honest fallbacks** | If Explorer refuses a tab (Windows 10, a Windows update, a virtual folder) the folder opens in a window instead of vanishing. |
+| **Honest fallbacks** | If Explorer refuses a tab (Windows 10, a Windows update) the folder opens in a window instead of vanishing. |
 
 ## How the rules work
 
@@ -58,99 +64,63 @@ The whole app is built around one decision table:
 
 | The user does this | Already open? | Result |
 |---|---|---|
-| Double-click a folder in Explorer | no | new tab in the active window |
-| Double-click a folder in Explorer | yes | switch to the existing tab, no duplicate |
-| Middle-click a folder | no | new *background* tab |
-| Middle-click a folder | yes | switch to the existing tab |
-| Right-click → **Open in new tab** | any | always a new tab (duplicate allowed) |
-| Right-click → **Open in new window** | any | always a new window (duplicate allowed) |
+| Open a folder that would make a new window (desktop, Start, Win+E, another app, …) | no | new tab in the existing window |
+| Open a folder that would make a new window | yes | switch to the existing tab, no duplicate |
+| Double-click a folder *inside* Explorer | — | Explorer's own behaviour: navigates the current tab |
+| Ctrl+T, middle-click or "Open in new tab" inside Explorer | — | Explorer's own new tab, brought to the front; a special folder moves to its fixed place on the left |
 | Duplicate shortcut (`Alt+Shift+D`) | any | new tab with the same folder |
 | `--new-tab` / `--new-window` | any | always new tab / new window |
-| Shift / Ctrl / Alt / Win + double-click | any | plain Windows behaviour: a real, separate window |
-| Any of those windows, later | — | stays a window; it is never folded into a tab |
+| **Ctrl+Shift** held while the folder opens | any | plain Windows behaviour: a real, separate window |
+| Drag a tab out of a window | — | the dragged-out window stays a window |
 
-"Already open" is decided by asking the shell for the location of every tab in every
+"Already open" is decided from the locations the shell reports for every tab in every
 File Explorer window. String comparison is the fast path; paths that differ textually
 (`C:\PROGRA~1`, junctions, redirected folders, `shell:::{GUID}` items) are compared through
 shell item IDs (PIDLs), which is how Windows itself decides whether two folders are the same.
 
-`Ctrl / Alt / Shift / Win` are the universal escape hatch: with any modifier held the click
-is passed straight to Explorer, so the folder opens in its own window.
-
 ## One window, many tabs
 
-The mechanism is the one w4po/ExplorerTabUtility uses, because it is the one that holds up on
-Windows 11: WinExplorer does not try to prevent Explorer from creating a window. It watches
-for a window being **shown** (`EVENT_OBJECT_SHOW`), and the instant a `CabinetWClass` window
-appears it is made fully transparent — before any shell call, so before it is painted — then
-folded into a tab of the window that is already open and quit. A window that cannot be folded
-(excluded folder, a folder that is virtual on purpose, a gesture we did not see) is made
-visible again immediately, so nothing is ever left invisible on screen. New windows are folded
-one at a time, in arrival order, so two windows appearing together cannot race into two tabs for
-the same folder.
+The mechanism is a port of w4po/ExplorerTabUtility's watcher, because it is the one that
+holds up on Windows 11: WinExplorer does not try to prevent Explorer from creating a window.
 
-The default is strict: **one File Explorer window**. Whatever makes a folder appear — a
-double-click, the desktop, Start, the taskbar, Win+E, a shortcut in another app, a
-`WinExplorer.exe --open` call — it lands as a tab in the window you already have. Windows
-that appear anyway (a second window from an app, a window you opened before starting
-WinExplorer, a *This PC* window with virtual folders allowed) are folded in within a second
-or two: their tabs move over and the empty window is closed.
+- Every Explorer tab announces itself in the shell's `ShellWindows` collection, and the
+  collection raises **`WindowRegistered`** the moment a new one appears. That event — not a
+  mouse hook, not polling — is what drives the app.
+- In parallel, a `EVENT_OBJECT_SHOW` hook makes a brand-new `CabinetWClass` window fully
+  transparent *before it is painted*, so a window that is about to become a tab never
+  flashes on screen.
+- When the registered window turns out to be a new single-tab window (and not just a new
+  tab in an existing window), its folder is looked up among the tracked tabs. If a tab
+  already shows it, that tab is selected; otherwise the main window gets a new tab
+  (`Ctrl+T` via `WM_COMMAND`) which is navigated to the folder. Then the surplus window is
+  quit. If anything goes wrong, the window is simply made visible again — nothing is ever
+  left invisible and no folder is lost.
+- New windows are folded one at a time, in arrival order, so two windows appearing together
+  cannot race into two tabs for the same folder.
 
-Home, This PC, Desktop and Downloads are special: they always sit at the left of the strip, in
-that fixed order, ahead of normal folders. Opening one of them when it is not a tab yet puts
-its tab in front of the others; a normal folder is added at the end. Switching this off is a
-checkbox in the settings window (*Keep Home, This PC, Desktop and Downloads at the left*).
+Home, This PC, Desktop and Downloads are special: they always sit at the left of the strip,
+in that fixed order, ahead of normal folders. Explorer can only *append* tabs, so the app
+moves folders, not tabs: the leading tabs shift one place to the right (at most four
+navigations — the special group is never larger) and the special folder lands in the tab at
+its position. Switching this off is a checkbox in the settings window (*Keep Home, This PC,
+Desktop and Downloads at the left*).
 
-Where a tab goes is decided from the tab strip itself, not from the window's child handles:
-those come back in z-order (the active tab first), which is what used to put tabs in the wrong
-place. The strip's order is read with UI Automation (titles only, cached for a moment and
-abandoned if Explorer is busy), and placing a tab is a **single** move — at most one
-`Ctrl+<n>` to make the tab in front of the target current, then `Ctrl+T` — so the strip never
-walks through the other tabs while a folder opens. When a special folder has to become the
-*first* tab, which cannot be inserted in front of anything, the tab that is first now takes the
-new folder and the new tab keeps the old one; the strip ends up in the right order and no
-folder is lost.
+Two gestures always beat the single-window rule and produce a separate window that
+WinExplorer leaves alone from then on:
 
-Two gestures always beat that rule and produce a separate window that WinExplorer leaves
-alone from then on:
+- hold **Ctrl+Shift** while the folder opens;
+- **drag a tab out** of a window — the folder shows up in the closed-tabs history the moment
+  the tab leaves its old window, which is how the new window is recognised as deliberate.
 
-- **Shift+double-click** a folder (holding Ctrl, Alt or Win works too),
-- right-click a folder → **Open in new window** — on the desktop or in any Explorer window.
-  The folder that was right-clicked is remembered, so the window that shows up with exactly
-  that folder is the deliberate one. A right-click on a *file*, on empty space or in another
-  app does not stop anything.
+Windows that were already open when WinExplorer starts are tracked (so duplicate detection
+sees their tabs) but never folded behind your back; **Collect windows into one** in the tray
+menu (or `--single-window`) folds them on demand.
 
-Reading the tabs of a window never activates them either: every shell window item describes
-the tab it owns, so the folders of a background window can be read (and folded in) without the
-user seeing a single tab switch. If a tab's folder cannot be read at all, the window is left
-alone rather than closed — a leftover window is better than losing a tab — but it is retried
-within a second instead of being parked for a minute, so it does not survive as a second
-window.
-
-The folder of a tab is read from the shell automation. The `ShellWindows` object is asked
-first (through its typed interface); `Shell.Application` and the window's own address bar
-(MSAA/UI Automation) are the fallbacks, because which engine answers depends on the Windows
-build. A shell window item describes the frame window in its `HWND` property, so the tab it belongs
-to has to be asked of the item itself (`IServiceProvider` → `IShellBrowser.GetWindow`). With
-that handle, navigating the item moves that tab and nothing else — no tab has to be activated
-first, which is what made it flicker. Every navigation is verified afterwards; if the folder
-did not arrive, the tab is closed again instead of being left on *Home*. That call runs on
-a dedicated STA thread that dispatches messages while it waits — without that, Explorer's
-automation server answers with nothing at all, and no window could ever be compared with
-another. When the automation server still refuses to say what a tab shows, the folder is read
-straight off the tab's own address bar, and a shell call that never returns is abandoned after
-a couple of seconds instead of freezing the app.
-
-The pass that does this runs on its own timer (about once a second), independent of the tab
-bookkeeping, and it repairs itself: if Explorer refuses to create a tab for a moment — which
-happens while a folder is loading — WinExplorer retries, and it keeps trying in later passes
-instead of giving up. If a tab cannot be created at all and the window has a single tab, the
-folder is shown in that tab instead of in a new window. **Collect windows into one** in the tray menu performs a pass by hand,
-even while the automatic switches are off.
-
-Switched off: **Keep a single File Explorer window** in the settings window. Then the two
-older switches apply again: **Also fold windows that are already open** and **Fold other new
-Explorer windows into tabs**.
+All COM work — the `ShellWindows` collection, the event sinks, reading locations, `Navigate2`
+— runs on one dedicated STA thread that pumps messages while it waits; without that,
+Explorer's automation answers with nothing at all. A shell call that never returns is
+abandoned after a couple of seconds instead of freezing the app, and a health check
+reconnects everything when Explorer itself restarts.
 
 ## Requirements
 
@@ -274,9 +244,11 @@ The startup entry can be added or removed at any time, without reinstalling:
 ## Using it
 
 - **Start it once** (or let it start with Windows). It lives in the notification area.
-- **Double-click folders** as usual. They open as tabs.
-- **Right-click a folder** → *Open in WinExplorer tab* to be explicit, *Open in new tab* to
-  force a duplicate, *Open in new window* to get a window.
+- **Open folders** as usual — from the desktop, Start, the taskbar, Win+E, anywhere. Each
+  one appears as a tab in the Explorer window you already have (or switches to its tab).
+- **Hold Ctrl+Shift** while a folder opens to get a separate window.
+- **Right-click a folder** → *Open in WinExplorer tab* to send it to the tabbed window
+  explicitly (useful while the single-window switch is off).
 - **Duplicate** the current tab with `Alt+Shift+D`, **reopen** the last closed folder with
   `Alt+Shift+T`, **pause/resume** WinExplorer with `Ctrl+Alt+P`.
 - Closing the settings window keeps WinExplorer running in the tray (configurable). Use
@@ -292,17 +264,9 @@ there is no Save button.
 
 | Setting | Meaning |
 |---|---|
-| **Double-clicking a folder opens it as a tab** | The main switch on the click side. |
-| **Middle-clicking a folder opens it in a background tab** | De-duplicating middle-click. |
+| **Keep a single File Explorer window** | The main switch: every new Explorer window is reopened as a tab of the window you already have. Hold Ctrl+Shift while a folder opens to get a real window. |
 | **When the folder is already open** | *Switch to the tab that already shows it* (default) or *Open another tab anyway*. |
-| **Look for an already open copy in every Explorer window** | Off = only the target window is searched for duplicates. |
-| **Open new tabs in** | The window you are using, the last window you used, or the window with the most tabs. |
-| **Bring the new tab to the front** | Off = tabs are created in the background. |
-| **Keep a single File Explorer window** | The main switch: every folder becomes a tab in the one window, and extra windows are folded in. Shift+double-click / *Open in new window* still make real windows. |
-| **Also fold windows that are already open** | Collects the windows that were open before WinExplorer started (or that you deliberately kept). |
-| **Fold other new Explorer windows into tabs** | Catches folders opened from the desktop, Start, Win+E or other apps. |
 | **Keep Home, This PC, Desktop and Downloads at the left** | The fixed order described above. |
-| **Keep virtual folders as windows** | Recycle Bin, Control Panel, … stay windows. Only while the single-window switch is off — with one window, Home and This PC become tabs like everything else. |
 | **Use Win+E to open a tab** | Replaces the Win+E shortcut. |
 | **Add "Open in WinExplorer tab"…** | Per-user context menu entries (`HKCU\Software\Classes\Directory\shell`). |
 | **Use WinExplorer for every folder double-click in Windows** | Makes WinExplorer the default handler for folders (so double-clicking a folder on the desktop, in a file dialog or in another app is folded in as well). Restores the previous handler when switched off. |
@@ -364,23 +328,20 @@ All three can be changed in the **Shortcuts** tab.
 ## Troubleshooting
 
 - **A folder still opens in a window** — either WinExplorer is paused (check the tray icon
-  and the header of the settings window), the folder is on the exclusion list, a modifier
-  key was held, or the folder is a virtual location (search results, an archive, a phone).
-  With **Keep a single File Explorer window** on, such a window is folded in a moment later.
-- **"Open in new window" opens a tab instead** — there is a window *and* a folder open
-  somewhere, so the new window is folded in. Use `Shift+double-click` or turn **Keep a single
-  File Explorer window** off.
-- **Two windows remain and never merge** — one of them was opened with `Shift+double-click`
-  or *Open in new window*, so it is pinned on purpose. Close it (or drag its tabs where you
-  want them) and the next folder opens in the remaining window. The log says why a window was
-  kept (`kept as a window: ...`); `--diagnose` shows the last lines.
-- **A window appears and then turns into a tab** — that is the fold-in working: Windows had
-  already drawn the window. `--single-window` or the tray item does the same thing by hand.
-- **Nothing is folded and the log says "no folder could be read"** — the shell is not
-  telling the app which folder a tab shows. Run `--probe`: it lists every window and tab
-  *with* the folder the app managed to read, and for each tab what the three readers see
-  (`MSAA`, `UIA`, `IESW` — the address bar, UI Automation, and the `ShellWindows` object).
-  Whichever line has a path is the engine that works on that machine.
+  and the header of the settings window), the folder is on the exclusion list, Ctrl+Shift
+  was held, or the location is not a folder at all (Control Panel, search results, an
+  archive, a phone). There was also no other Explorer window to fold into — the very first
+  window always stays a window.
+- **Two windows remain and never merge** — the second one was opened with Ctrl+Shift or by
+  dragging a tab out, so it is deliberate; WinExplorer folds *new* windows, not ones you
+  made on purpose. Tray menu → **Collect windows into one** (or `--single-window`) merges
+  everything on demand.
+- **A window flashes before it becomes a tab** — Windows painted it before the hook could
+  hide it (heavy load, or the window appeared during the first seconds after startup, when
+  WinExplorer deliberately keeps its hands off restored session windows).
+- **Dedupe misses a folder** — run `--probe`: it lists every window and tab with the
+  location the shell reports for it. A tab whose line shows no location cannot be matched;
+  the log records what happened instead.
 - **Nothing is folded at all** — look for `Explorer did not create a tab` in the log. Windows
   11 22H2+ is required; on older builds the app cannot create tabs and every folder falls
   back to a window (which is also what the tab lookups need). `--restart` reloads the helper
@@ -414,10 +375,9 @@ All three can be changed in the **Shortcuts** tab.
   internals. Microsoft can change them in any update. WinExplorer verifies every step, falls
   back to a normal window and logs what happened instead of silently failing.
 - Folders inside archives, search results, libraries and other virtual locations keep
-  Explorer's own behaviour.
-- Because the double-click interception runs in a low-level mouse hook, a click that turns
-  out not to be a folder is replayed with synthesized input. This is invisible in practice
-  but is the reason the app needs the hook to stay responsive.
+  Explorer's own behaviour; Control Panel windows are never folded.
+- Double-clicking a folder inside an Explorer window is Explorer's own navigation (the
+  current tab navigates). WinExplorer only converts folders that would open a *new window*.
 - Windows may show the "Open with" style chooser the first time a verb is used, depending on
   your shell settings; choose WinExplorer and tick *Always*.
 
@@ -474,10 +434,10 @@ Install.cmd        double-click installer (runs scripts\install-app.ps1)
 Uninstall.cmd      double-click uninstaller (also registered in Settings > Apps)
 src/WinExplorer/
   Core/            settings, command line, shortcuts, path normalisation (no Win32)
-  Interop/         P/Invoke declarations, MSAA + IShellFolder interfaces
-  Shell/           Explorer windows/tabs, tab commands, shell automation, PIDL comparison
-  Hooks/           low-level mouse + keyboard hooks, MSAA hit testing
-  Services/        policy (open/switch/merge), watcher, IPC, registry, tray, logging
+  Interop/         P/Invoke declarations, IWebBrowser2/ShellWindows + IShellFolder interfaces
+  Shell/           the watcher engine, Explorer windows/tabs, PIDL comparison
+  Hooks/           low-level keyboard hook (shortcuts, Win+E)
+  Services/        policy (open/switch), IPC, registry, tray, logging
   UI/              WPF settings window
 tests/             xUnit tests for the core
 scripts/           build, publish, install (install-app.ps1), uninstall

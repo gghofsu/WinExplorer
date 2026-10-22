@@ -106,8 +106,6 @@ public sealed class SettingsStore
     {
         if (!Enum.IsDefined(settings.WhenAlreadyOpen))
             settings.WhenAlreadyOpen = AlreadyOpenBehavior.SwitchToExistingTab;
-        if (!Enum.IsDefined(settings.TargetWindow))
-            settings.TargetWindow = TargetWindowPolicy.ForegroundWindow;
 
         settings.ExcludedPaths ??= new List<string>();
         settings.ExcludedPaths = settings.ExcludedPaths

@@ -62,6 +62,19 @@ public class TabHistoryTests
     }
 
     [Fact]
+    public void WasClosedRecently_matches_fresh_entries_only()
+    {
+        var history = new TabHistory();
+        history.RecordClosed(@"C:\old", DateTimeOffset.Now.AddSeconds(-30));
+        history.RecordClosed(@"C:\fresh");
+
+        Assert.True(history.WasClosedRecently(@"c:\FRESH", maxAgeMs: 2000));
+        Assert.False(history.WasClosedRecently(@"C:\old", maxAgeMs: 2000));
+        Assert.False(history.WasClosedRecently(@"C:\never", maxAgeMs: 2000));
+        Assert.False(history.WasClosedRecently(null, maxAgeMs: 2000));
+    }
+
+    [Fact]
     public void Snapshot_is_ordered_newest_first()
     {
         var history = new TabHistory();

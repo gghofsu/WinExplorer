@@ -436,17 +436,13 @@ internal static class NativeMethods
     internal const uint COINIT_APARTMENTTHREADED = 0x2;
     internal const uint COINIT_DISABLE_OLE1DDE = 0x4;
 
-    // ---- oleacc ---------------------------------------------------------
-    // The last parameter is a VARIANT (not a handle): marshal it as a boxed object.
-    [DllImport("oleacc.dll")]
-    internal static extern int AccessibleObjectFromPoint(POINT point,
-        [MarshalAs(UnmanagedType.Interface)] out IAccessible? accessible,
-        [Out] out object? childId);
+    // ---- dwmapi ---------------------------------------------------------
 
-    [DllImport("oleacc.dll")]
-    internal static extern int AccessibleObjectFromWindow(nint hwnd, uint objectId,
-        [In] ref Guid interfaceId,
-        [MarshalAs(UnmanagedType.Interface)] out IAccessible? accessible);
+    /// <summary>DWM cloaking: the window keeps existing but is not composed at all.</summary>
+    internal const uint DWMWA_CLOAK = 13;
+
+    [DllImport("dwmapi.dll")]
+    internal static extern int DwmSetWindowAttribute(nint hwnd, uint attribute, ref int value, int size);
 
     // ---- shell known folders ---------------------------------------------
 

@@ -60,20 +60,15 @@ internal static class Diagnostics
         builder.AppendLine($"  Start with Windows      : {settings.StartWithWindows} "
             + $"(registry says {(SafeStartupEnabled(log) is { } on ? on.ToString() : "unknown")})");
         builder.AppendLine($"  Folder context menu     : {settings.ContextMenuInstalled}");
-        builder.AppendLine($"  Double-click as tab     : {settings.InterceptDoubleClick}");
-        builder.AppendLine($"  Middle-click as tab     : {settings.InterceptMiddleClick}");
         builder.AppendLine($"  Single window mode      : {settings.SingleWindowMode}");
-        builder.AppendLine($"  Fold new windows        : {settings.MergeNewWindows}");
-        builder.AppendLine($"  Fold existing windows   : {settings.MergeExistingWindows}");
-        builder.AppendLine($"  Special folders first  : {settings.KeepSpecialFoldersFirst}");
-        builder.AppendLine($"  Special folder paths   : Desktop='{SpecialFolders.DesktopPath()}', " +
+        builder.AppendLine($"  When already open       : {settings.WhenAlreadyOpen}");
+        builder.AppendLine($"  Special folders first   : {settings.KeepSpecialFoldersFirst}");
+        builder.AppendLine($"  Special folder paths    : Desktop='{SpecialFolders.DesktopPath()}', " +
                            $"Downloads='{SpecialFolders.DownloadsPath()}'");
+        builder.AppendLine($"  Minimize to tray        : {settings.MinimizeToTrayOnClose}");
         builder.AppendLine();
         builder.AppendLine("Shell");
-        builder.AppendLine("  " + Shell.ShellCom.Describe());
-        builder.AppendLine("  tab lookups: " + Shell.ShellCom.DescribeLookups());
         builder.AppendLine("  " + StaExecutor.HealthSummary());
-        builder.AppendLine($"  Minimize to tray        : {settings.MinimizeToTrayOnClose}");
         builder.AppendLine();
 
         builder.AppendLine("Recent log");
