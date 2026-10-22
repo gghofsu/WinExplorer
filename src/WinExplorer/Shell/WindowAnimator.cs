@@ -13,11 +13,29 @@ internal static class WindowAnimator
 
     public static bool IsHidden(nint hwnd) => Hidden.ContainsKey(hwnd);
 
-    /// <summary>Fades the window to fully transparent. Returns false if it could not be hidden.</summary>
+    /// <summary>
+    /// Makes the window completely invisible. DWM cloaking is the primary mechanism (it
+    /// stops composition instantly, before the frame is ever drawn); layered alpha 0 is
+    /// kept as a belt-and-braces fallback for setups where cloaking is refused.
+    /// Returns false only if neither worked.
+    /// </summary>
     public static bool Hide(nint hwnd)
     {
         if (hwnd == 0 || !NativeMethods.IsWindow(hwnd))
             return false;
+
+        var hidden = false;
+
+        try
+        {
+            var cloak = 1;
+            if (NativeMethods.DwmSetWindowAttribute(hwnd, NativeMethods.DWMWA_CLOAK, ref cloak, sizeof(int)) == 0)
+                hidden = true;
+        }
+        catch
+        {
+            // dwmapi missing/refusing - fall through to the layered approach.
+        }
 
         try
         {
@@ -25,16 +43,17 @@ internal static class WindowAnimator
             if ((style & NativeMethods.WS_EX_LAYERED) == 0)
                 NativeMethods.SetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE, style | NativeMethods.WS_EX_LAYERED);
 
-            if (!NativeMethods.SetLayeredWindowAttributes(hwnd, 0, 0, NativeMethods.LWA_ALPHA))
-                return false;
-
-            Hidden[hwnd] = true;
-            return true;
+            if (NativeMethods.SetLayeredWindowAttributes(hwnd, 0, 0, NativeMethods.LWA_ALPHA))
+                hidden = true;
         }
         catch
         {
-            return false;
+            // ignore
         }
+
+        if (hidden)
+            Hidden[hwnd] = true;
+        return hidden;
     }
 
     /// <summary>Restores a window hidden by <see cref="Hide"/>.</summary>
@@ -42,6 +61,16 @@ internal static class WindowAnimator
     {
         if (hwnd == 0 || !NativeMethods.IsWindow(hwnd))
             return;
+
+        try
+        {
+            var cloak = 0;
+            NativeMethods.DwmSetWindowAttribute(hwnd, NativeMethods.DWMWA_CLOAK, ref cloak, sizeof(int));
+        }
+        catch
+        {
+            // ignore
+        }
 
         try
         {

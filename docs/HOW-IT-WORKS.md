@@ -69,8 +69,14 @@ the desktop, Start, the taskbar, Win+E, a file dialog, another application. The 
 turns that window into a tab:
 
 1. **Hide before paint.** An `EVENT_OBJECT_SHOW` win-event hook sees the new
-   `CabinetWClass` window before it is drawn and makes it fully transparent (layered,
-   alpha 0). If that fails, nothing breaks — the window just flashes once.
+   `CabinetWClass` window before it is drawn and hides it with **DWM cloaking**
+   (`DwmSetWindowAttribute(DWMWA_CLOAK)` — composition stops instantly and completely),
+   plus layered alpha 0 as a fallback. The hook lives on a **dedicated thread that does
+   nothing but pump messages**: out-of-context win-events are delivered through the
+   installing thread's message queue, and the shared shell STA thread is busy with COM
+   work exactly when windows are being created — which would delay the hide until after
+   the window painted. If hiding still fails, nothing breaks — the window just flashes
+   once.
 2. **`WindowRegistered` fires.** The watcher finds the unseen entry (polling the collection
    for up to 2.5 s), waits briefly for its location, and decides whether to fold. It folds
    only a *single-tab* window that is not the main window, when at least one other tab
@@ -148,10 +154,27 @@ This is exactly how Explorer decides whether two paths are the same folder. Tabs
 currently being folded are never used as a dedupe target, and a matched tab is validated
 with `IsWindow` before it is selected.
 
+### Tabs the user creates inside a window
+
+`WindowRegistered` also fires for a tab added to an *existing* window — Ctrl+T, a
+middle-clicked folder, "Open in new tab". Those are not windows to fold, but they get two
+touches:
+
+- the tab is **brought to the front** (Explorer leaves middle-click tabs in the
+  background);
+- if it shows one of the four special folders — and that folder does not already have a
+  tab in the window — it is moved to its fixed place at the left (section 6).
+
+Tabs the engine creates itself are recognised (an in-flight counter plus a short-lived
+set of engine-created tab handles) and skipped here, because `OpenAsTabAsync` navigates
+and places them itself.
+
 ## 6. Keeping Home, This PC, Desktop, Downloads at the left
 
 Explorer can only *append* tabs, so the watcher moves **folders**, not tabs. When a special
-folder (rank 0–3: Home, This PC, Desktop, Downloads) opens as a new tab:
+folder (rank 0–3: Home, This PC, Desktop, Downloads) opens as a new tab — created by the
+engine *or* by the user inside the window — and no other tab of that window already shows
+a folder of the same rank (then the left group is already in order):
 
 1. Count `k` = tracked specials in that window with a smaller rank (the target position)
    and `m` = all tracked specials. Specials always occupy positions `0..m-1` because this

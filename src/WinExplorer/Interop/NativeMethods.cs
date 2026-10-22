@@ -436,6 +436,14 @@ internal static class NativeMethods
     internal const uint COINIT_APARTMENTTHREADED = 0x2;
     internal const uint COINIT_DISABLE_OLE1DDE = 0x4;
 
+    // ---- dwmapi ---------------------------------------------------------
+
+    /// <summary>DWM cloaking: the window keeps existing but is not composed at all.</summary>
+    internal const uint DWMWA_CLOAK = 13;
+
+    [DllImport("dwmapi.dll")]
+    internal static extern int DwmSetWindowAttribute(nint hwnd, uint attribute, ref int value, int size);
+
     // ---- shell known folders ---------------------------------------------
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
