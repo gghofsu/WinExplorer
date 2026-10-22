@@ -47,7 +47,7 @@ navigates the current tab (Ctrl+double-click opens Explorer's own new tab, as al
 | **New windows become tabs** | Any folder that would open a new Explorer window — the desktop, Start, the taskbar, Win+E, a file dialog, another app, the context menu, the command line — lands as a tab in the window you already have. |
 | **No accidental duplicates** | Opening a folder that is already shown in a tab switches to that tab (and brings its window forward) instead of creating a second copy. |
 | **Invisible merge** | The surplus window is cloaked by DWM before it is ever painted (from a hook thread that does nothing else), so folding a window into a tab happens without anything flashing on screen. |
-| **New tabs come to the front** | A tab opened inside Explorer with Ctrl+T, a middle-click or "Open in new tab" is selected immediately instead of staying in the background. |
+| **New tabs come to the front** | A tab opened inside Explorer with Ctrl+T, a middle-click or "Open in new tab" is selected immediately; if its folder is already open, the duplicate tab closes and the existing tab is selected. |
 | **Home / This PC / Desktop / Downloads first** | These four folders are always placed at the left of the tab strip, in that order (Home, This PC, Desktop, Downloads), in front of every other tab — the way Explorer's own windows start at Home. This also applies when one of them is opened as a new tab inside the current window. |
 | **Duplicates on demand** | Only an explicit request creates a second tab for the same folder: the duplicate shortcut, or `--new-tab` / `--new-window` on the command line. |
 | **A window when you want one** | Hold **Ctrl+Shift** while a folder opens and the window stays a window; it is not folded back afterwards. |
@@ -67,7 +67,8 @@ The whole app is built around one decision table:
 | Open a folder that would make a new window (desktop, Start, Win+E, another app, …) | no | new tab in the existing window |
 | Open a folder that would make a new window | yes | switch to the existing tab, no duplicate |
 | Double-click a folder *inside* Explorer | — | Explorer's own behaviour: navigates the current tab |
-| Ctrl+T, middle-click or "Open in new tab" inside Explorer | — | Explorer's own new tab, brought to the front; a special folder moves to its fixed place on the left |
+| Ctrl+T, middle-click or "Open in new tab" inside Explorer | no | new tab, brought to the front; a special folder moves left |
+| Ctrl+T, middle-click or "Open in new tab" inside Explorer | yes | close the redundant new tab and switch to the existing tab |
 | Duplicate shortcut (`Alt+Shift+D`) | any | new tab with the same folder |
 | `--new-tab` / `--new-window` | any | always new tab / new window |
 | **Ctrl+Shift** held while the folder opens | any | plain Windows behaviour: a real, separate window |
@@ -86,9 +87,9 @@ holds up on Windows 11: WinExplorer does not try to prevent Explorer from creati
 - Every Explorer tab announces itself in the shell's `ShellWindows` collection, and the
   collection raises **`WindowRegistered`** the moment a new one appears. That event — not a
   mouse hook, not polling — is what drives the app.
-- In parallel, a `EVENT_OBJECT_SHOW` hook makes a brand-new `CabinetWClass` window fully
-  transparent *before it is painted*, so a window that is about to become a tab never
-  flashes on screen.
+- In parallel, a `EVENT_OBJECT_CREATE` hook cloaks a brand-new `CabinetWClass` window as
+  soon as it is created; `EVENT_OBJECT_SHOW` retries the hide if the frame was not ready
+  yet. This keeps a window that is about to become a tab from flashing on screen.
 - When the registered window turns out to be a new single-tab window (and not just a new
   tab in an existing window), its folder is looked up among the tracked tabs. If a tab
   already shows it, that tab is selected; otherwise the main window gets a new tab

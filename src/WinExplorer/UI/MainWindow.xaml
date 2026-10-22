@@ -220,7 +220,7 @@
                                 <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6"
                                            Text="• A folder that is already open anywhere is never duplicated: you are switched to the tab that shows it." />
                                 <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6"
-                                           Text="• A duplicate only appears when you ask for one: right-click → Open in new tab / Open in new window, the duplicate shortcut, or the command line switches --new-tab and --new-window." />
+                                           Text="• A duplicate only appears when you explicitly ask for one: the duplicate shortcut or the command line switch --new-tab. Opening an already-open folder with a middle-click or Open in new tab switches to its existing tab." />
                                 <TextBlock Style="{StaticResource Caption}"
                                            Text="• The folder context menu is registered per user, so no administrator rights are needed." />
                             </StackPanel>

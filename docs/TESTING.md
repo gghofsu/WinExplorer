@@ -71,14 +71,17 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
 - [ ] With one window open, open a folder from another app while the shell is busy → either a
       tab appears and no window is left over, or the window stays visible (never transparent).
 
-### Duplicates on demand
+### New tabs and duplicates
 
-- [ ] Right-click a folder → *Open in new tab* → always a new tab, even when it is already
-      open (with WinExplorer's own verb and with Explorer's built-in item).
+- [ ] Ctrl+T with Home not already open → a new Home tab is selected immediately.
+- [ ] Ctrl+T with Home already open → no duplicate remains; the existing Home tab is selected.
+- [ ] Middle-click a folder not already open → a new tab is selected immediately.
+- [ ] Middle-click or choose *Open in new tab* for a folder already open → no duplicate
+      remains; the existing folder tab is selected (including across Explorer windows).
+- [ ] `Alt+Shift+D` in Explorer → duplicate tab, as an explicit duplicate request.
+- [ ] `WinExplorer.exe --open "C:\Temp" --new-tab` → duplicate tab, as an explicit request.
 - [ ] Right-click a folder → *Open in new window* → a separate window, even with window
       folding enabled.
-- [ ] `Alt+Shift+D` in Explorer → duplicate tab.
-- [ ] `WinExplorer.exe --open "C:\Temp" --new-tab` → duplicate tab.
 - [ ] `WinExplorer.exe --open "C:\Temp" --new-window` → new window.
 
 ### Shortcuts and state
