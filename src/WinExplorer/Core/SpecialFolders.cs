@@ -66,23 +66,48 @@ public static class SpecialFolders
     };
 
     /// <summary>
-    /// Where a folder has to be inserted so the fixed order survives: the number of tabs that
-    /// must stay in front of it. -1 means "at the end" (any other folder).
+    /// Where a folder belongs in a strip with the given tab titles: the position of the first
+    /// tab that is a normal folder or a special folder that comes after it. Empty strings are
+    /// tabs whose title is not known yet (treated as normal folders).
     /// </summary>
-    public static int InsertionIndex(IEnumerable<string> openLocations, string? location)
+    /// <returns>The 0-based position, or -1 when the folder simply belongs at the end.</returns>
+    public static int PositionIn(IReadOnlyList<string> titles, string? location)
     {
         var rank = Rank(location);
         if (rank is null)
             return -1;
 
-        var before = 0;
-        foreach (var open in openLocations)
+        for (var i = 0; i < titles.Count; i++)
         {
-            if (Rank(open) is int other && other < rank)
-                before++;
+            var otherRank = RankOfTitle(titles[i]);
+            if (otherRank is null || otherRank > rank)
+                return i;
         }
 
-        return before;
+        return titles.Count;
+    }
+
+    /// <summary>Rank of a tab title ("Home", "This PC", "Desktop", "Downloads"), or null.</summary>
+    public static int? RankOfTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return null;
+
+        var value = title.Trim();
+
+        if (string.Equals(value, "Home", StringComparison.OrdinalIgnoreCase))
+            return 0;
+
+        if (string.Equals(value, "This PC", StringComparison.OrdinalIgnoreCase))
+            return 1;
+
+        if (string.Equals(value, "Desktop", StringComparison.OrdinalIgnoreCase))
+            return 2;
+
+        if (string.Equals(value, "Downloads", StringComparison.OrdinalIgnoreCase))
+            return 3;
+
+        return null;
     }
 
     /// <summary>The user's Desktop folder as Explorer shows it.</summary>

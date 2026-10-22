@@ -45,31 +45,54 @@ public class SpecialFolderOrderTests
     }
 
     [Fact]
-    public void Insertion_index_is_the_number_of_higher_priority_tabs()
+    public void Home_goes_in_front_of_a_normal_folder()
     {
-        var open = new[] { @"C:\Users\someone\Documents", ThisPc };
-
-        // This PC is open, so Home has to go in front of it (position 0)...
-        Assert.Equal(0, SpecialFolders.InsertionIndex(open, Home));
-
-        // ...while a normal folder is appended.
-        Assert.Equal(-1, SpecialFolders.InsertionIndex(open, @"C:\Users\someone\Pictures"));
+        string[] titles = { "Documents", "Desktop" };
+        Assert.Equal(0, SpecialFolders.PositionIn(titles, Home));
     }
 
     [Fact]
-    public void A_lower_priority_folder_goes_before_the_higher_ones()
+    public void Desktop_goes_after_home_and_before_normal_folders()
     {
-        var open = new[] { @"C:\Users\someone\Documents" };
-
-        // Nothing is open yet, so This PC is the first tab.
-        Assert.Equal(0, SpecialFolders.InsertionIndex(open, ThisPc));
+        string[] titles = { "Home", "Documents" };
+        Assert.Equal(1, SpecialFolders.PositionIn(titles, "shell:::{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"));
     }
 
     [Fact]
-    public void Nothing_special_open_puts_the_folder_at_the_front()
+    public void Downloads_goes_after_this_pc_and_desktop()
     {
-        var open = new[] { @"C:\one", @"C:\two" };
-        Assert.Equal(0, SpecialFolders.InsertionIndex(open, Home));
-        Assert.Equal(-1, SpecialFolders.InsertionIndex(open, @"C:\three"));
+        string[] titles = { "Home", "This PC", "Desktop", "Pictures" };
+        Assert.Equal(3, SpecialFolders.PositionIn(titles, "shell:::{374DE290-123F-4565-9164-39C4925E467B}"));
+    }
+
+    [Fact]
+    public void A_special_folder_goes_before_a_normal_tab_that_sits_first()
+    {
+        string[] titles = { "Documents", "Home" };
+        Assert.Equal(0, SpecialFolders.PositionIn(titles, ThisPc));
+    }
+
+    [Fact]
+    public void A_normal_folder_is_never_inserted()
+    {
+        string[] titles = { "Home", "This PC" };
+        Assert.Equal(-1, SpecialFolders.PositionIn(titles, @"C:\Users\someone\Documents"));
+    }
+
+    [Fact]
+    public void An_empty_strip_puts_the_special_folder_first()
+    {
+        Assert.Equal(0, SpecialFolders.PositionIn(Array.Empty<string>(), Home));
+    }
+
+    [Theory]
+    [InlineData("Home", 0)]
+    [InlineData("This PC", 1)]
+    [InlineData("Desktop", 2)]
+    [InlineData("Downloads", 3)]
+    [InlineData(" Documents ", null)]
+    public void Titles_are_ranked(string title, int? expected)
+    {
+        Assert.Equal(expected, SpecialFolders.RankOfTitle(title));
     }
 }

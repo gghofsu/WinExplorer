@@ -17,6 +17,11 @@ internal sealed class ExplorerService : IDisposable
     private readonly Logger _log;
     private readonly TabHistory _history;
     private readonly SemaphoreSlim _openGate = new(1, 1);
+
+    // Folders an open is currently working on. Folding waits for these, because a folder that
+    // is being opened may not be visible in the tab strip for a moment yet - and opening it a
+    // second time is exactly how one folder ended up as two windows.
+    private readonly HashSet<string> _inFlight = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _consolidateGate = new(1, 1);
     private readonly Dictionary<string, long> _suppressedClosures = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _suppressGate = new();
@@ -26,9 +31,24 @@ internal sealed class ExplorerService : IDisposable
     private readonly HashSet<nint> _pinnedWindows = new();
     private readonly object _pinGate = new();
 
-    // Windows that could not be folded (Explorer refused the tab). They are retried after a
-    // pause instead of every second, so a stubborn window cannot cause a create/close loop.
-    private readonly Dictionary<nint, long> _foldBackoff = new();
+    // Per-window fold state. Failures are retried quickly while they look transient (a window
+    // that is still loading reports no folder yet) and are only given up on after several
+    // attempts - a leftover window must not survive for a minute because of one slow read.
+    private readonly Dictionary<nint, FoldState> _foldState = new();
+
+    private sealed class FoldState
+    {
+        public int Attempts;
+        public long NextTry;
+        public string Reason = string.Empty;
+        public bool Permanent;
+    }
+
+    /// <summary>A transient failure is retried after this long (grows with each attempt).</summary>
+    private const int RetryBaseMs = 250;
+
+    /// <summary>How often a transient failure is retried before the window is left alone.</summary>
+    private const int MaxAttempts = 12;
 
     // Windows currently being folded. The window hook and the periodic pass can both see the
     // same window; without this they would each create a tab for it.
@@ -77,6 +97,9 @@ internal sealed class ExplorerService : IDisposable
             return await OpenInNewWindowAsync(path, request, cancellationToken).ConfigureAwait(false);
 
         await _openGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        lock (_pinGate)
+            _inFlight.Add(path);
+
         try
         {
             var allowDuplicate = request.Mode == OpenMode.NewTabInExistingWindow ||
@@ -122,6 +145,16 @@ internal sealed class ExplorerService : IDisposable
             }
 
             var targetWindow = await ChooseTargetWindowAsync(settings, request, cancellationToken).ConfigureAwait(false);
+            if (targetWindow == 0)
+            {
+                // A window may have appeared between the two looks (another app, or Explorer's
+                // own handler racing us): ask once more before creating one, because a second
+                // window for the same folder is exactly what must not happen.
+                ExplorerWindows.InvalidateCache();
+                targetWindow = await ChooseTargetWindowAsync(settings, request, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             if (targetWindow == 0)
             {
                 // Nothing open at all: the first folder has to create the first window.
@@ -171,6 +204,9 @@ internal sealed class ExplorerService : IDisposable
         }
         finally
         {
+            lock (_pinGate)
+                _inFlight.Remove(path);
+
             _openGate.Release();
         }
     }
@@ -195,27 +231,19 @@ internal sealed class ExplorerService : IDisposable
     }
 
     /// <summary>
-    /// Where a folder belongs in the tab strip: the number of tabs that must stay in front of
-    /// it, or -1 for "at the end".
+    /// Where a folder belongs in the tab strip: a 0-based visual position, or -1 for "at the
+    /// end". Only the special folders (Home, This PC, Desktop, Downloads) are placed, and they
+    /// are read from the tab strip itself, so no tab has to be activated.
     /// </summary>
-    private async Task<int> ComputeInsertIndexAsync(nint window, string path, AppSettings settings,
+    private Task<int> ComputeInsertIndexAsync(nint window, string path, AppSettings settings,
         CancellationToken cancellationToken)
     {
         if (!settings.KeepSpecialFoldersFirst || !SpecialFolders.IsSpecial(path))
-            return -1;
+            return Task.FromResult(-1);
 
-        // The shell knows the folder of every tab without touching them, so this is cheap and
-        // does not activate anything.
-        ExplorerWindows.InvalidateCache();
-        var map = await _tabs.RunOnQueryThreadAsync(() => ExplorerWindows.GetLocationMap(maxAgeMs: 0, refresh: true))
-            .ConfigureAwait(false);
-
-        var tabs = ExplorerWindows.GetTabs(window);
-        var locations = tabs.Select(t => map.TryGetValue(t, out var entry) ? entry.Location : string.Empty);
-
-        var index = SpecialFolders.InsertionIndex(locations, path);
-        _log.Debug($"'{PathNormalizer.ToDisplayName(path)}' belongs at tab position {index}.");
-        return index;
+        var position = TabStripOrder.InsertionPosition(window, path);
+        _log.Debug($"'{PathNormalizer.ToDisplayName(path)}' belongs at tab position {position}.");
+        return Task.FromResult(position);
     }
 
     private async Task<nint> ChooseTargetWindowAsync(AppSettings settings, OpenRequest request,
@@ -354,7 +382,7 @@ internal sealed class ExplorerService : IDisposable
 
         if (string.IsNullOrEmpty(location))
         {
-            _log.Debug($"Merge skipped: window 0x{newWindow:X} never reported a folder.");
+            NoteFoldFailure(newWindow, "the window did not report a folder yet");
             return false;
         }
 
@@ -524,27 +552,83 @@ internal sealed class ExplorerService : IDisposable
             foreach (var window in _pinnedWindows.Where(h => !alive.Contains(h)).ToList())
                 _pinnedWindows.Remove(window);
 
-            foreach (var window in _foldBackoff.Keys.Where(h => !alive.Contains(h)).ToList())
-                _foldBackoff.Remove(window);
+            foreach (var window in _foldState.Keys.Where(h => !alive.Contains(h)).ToList())
+                _foldState.Remove(window);
         }
     }
 
-    /// <summary>True when this window already failed to fold and should be left alone for a while.</summary>
-    private bool IsBackingOff(nint window)
+    /// <summary>True when this window should not be tried again yet.</summary>
+    private bool ShouldSkipFold(nint window)
     {
         lock (_pinGate)
         {
-            return _foldBackoff.TryGetValue(window, out var since) &&
-                   Environment.TickCount64 - since < 60000;
+            return _foldState.TryGetValue(window, out var state) && Environment.TickCount64 < state.NextTry;
         }
     }
 
-    private void BackOff(nint window, string reason)
+    /// <summary>
+    /// Records a failure. A transient one (the shell does not know the folder yet) is retried
+    /// after a short pause; a permanent one (excluded folder, refused tab) parks the window for
+    /// half a minute so it cannot cause a create/close loop.
+    /// </summary>
+    private void NoteFoldFailure(nint window, string reason, bool permanent = false)
+    {
+        string? warning = null;
+
+        lock (_pinGate)
+        {
+            if (permanent || !_foldState.TryGetValue(window, out var state))
+            {
+                state = new FoldState();
+                _foldState[window] = state;
+            }
+
+            state.Attempts++;
+            state.Reason = reason;
+
+            if (permanent)
+            {
+                state.Permanent = true;
+                state.NextTry = Environment.TickCount64 + 30000;
+                warning = $"Window 0x{window:X} stays a window: {reason}";
+            }
+            else if (state.Attempts >= MaxAttempts)
+            {
+                state.NextTry = Environment.TickCount64 + 30000;
+                warning = $"Window 0x{window:X} stays a window after {state.Attempts} attempts: {reason}";
+            }
+            else
+            {
+                state.NextTry = Environment.TickCount64 + (RetryBaseMs * state.Attempts);
+            }
+        }
+
+        if (warning is not null)
+            _log.Warn(warning);
+        else
+            _log.Debug($"Window 0x{window:X} not folded yet ({reason}); will retry.");
+    }
+
+    /// <summary>Waits (briefly) while an open for this folder is still running.</summary>
+    private async Task WaitForInFlightAsync(string location, CancellationToken cancellationToken)
+    {
+        var deadline = Environment.TickCount64 + 4000;
+        while (Environment.TickCount64 < deadline)
+        {
+            lock (_pinGate)
+            {
+                if (!_inFlight.Contains(location))
+                    return;
+            }
+
+            await Task.Delay(60, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private void ClearFoldState(nint window)
     {
         lock (_pinGate)
-            _foldBackoff[window] = Environment.TickCount64;
-
-        _log.Warn($"Window 0x{window:X} stays a window for now: {reason}");
+            _foldState.Remove(window);
     }
 
     /// <summary>
@@ -658,7 +742,7 @@ internal sealed class ExplorerService : IDisposable
     {
         var settings = _settings.Current;
 
-        if (IsBackingOff(window))
+        if (ShouldSkipFold(window))
             return false;
 
         lock (_pinGate)
@@ -693,8 +777,8 @@ internal sealed class ExplorerService : IDisposable
         if (unreadable > 0 || readable.Count == 0)
         {
             // A tab whose folder cannot be read cannot be recreated, and closing the window
-            // would take it with it. Postpone; the next pass tries again.
-            BackOff(window, $"{unreadable} of {locations.Count} tab(s) report no folder (run --probe).");
+            // would take it with it. Retried within a second; the reason ends up in the log.
+            NoteFoldFailure(window, $"{unreadable} of {locations.Count} tab(s) report no folder yet");
             return false;
         }
 
@@ -706,12 +790,16 @@ internal sealed class ExplorerService : IDisposable
             (!settings.SingleWindowMode && settings.KeepVirtualFoldersAsWindows &&
              locations.Any(PathNormalizer.IsShellNamespace)))
         {
-            BackOff(window, "a folder in it keeps normal Windows behaviour (excluded or virtual).");
+            NoteFoldFailure(window, "a folder in it keeps normal Windows behaviour", permanent: true);
             return false;
         }
 
         foreach (var location in locations)
         {
+            // If this folder is being opened right now, let that finish first: the new tab is
+            // not in the strip yet, and a second open would give the folder two tabs/windows.
+            await WaitForInFlightAsync(location, cancellationToken).ConfigureAwait(false);
+
             // Already open in the surviving window: nothing to add, just drop the duplicate.
             ExplorerWindows.InvalidateCache();
             if (ExplorerWindows.FindTab(location, target, acrossAllWindows: false) is not null)
@@ -732,7 +820,8 @@ internal sealed class ExplorerService : IDisposable
 
             if (!result.Succeeded)
             {
-                BackOff(window, $"'{PathNormalizer.ToDisplayName(location)}' could not be opened.");
+                NoteFoldFailure(window, $"'{PathNormalizer.ToDisplayName(location)}' could not be opened",
+                    permanent: true);
                 return false;
             }
 
@@ -740,7 +829,7 @@ internal sealed class ExplorerService : IDisposable
             {
                 // Explorer refused the tab and opened yet another window. Keep the window we
                 // were trying to fold (it shows the same folder) instead of piling up more.
-                BackOff(window, "Explorer refused to create a tab.");
+                NoteFoldFailure(window, "Explorer refused to create a tab", permanent: true);
                 if (result.Window != 0 && result.Window != window)
                     await _tabs.CloseWindowAsync(result.Window, cancellationToken).ConfigureAwait(false);
                 return false;
@@ -750,6 +839,7 @@ internal sealed class ExplorerService : IDisposable
         }
 
         ExplorerWindows.InvalidateCache();
+        ClearFoldState(window);
 
         // Explorer closes a window by itself once its last tab has moved to the other
         // window, which makes the close fail on a handle that no longer exists.

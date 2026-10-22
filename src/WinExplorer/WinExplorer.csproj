@@ -12,8 +12,8 @@
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <Version>1.1.7</Version>
-    <FileVersion>1.1.7.0</FileVersion>
+    <Version>1.2.0</Version>
+    <FileVersion>1.2.0.0</FileVersion>
     <AssemblyTitle>WinExplorer</AssemblyTitle>
     <Description>Opens every folder as a tab in one File Explorer window, and switches to the tab that already shows it.</Description>
     <PackageProjectUrl>https://github.com/gghofsu/WinExplorer</PackageProjectUrl>

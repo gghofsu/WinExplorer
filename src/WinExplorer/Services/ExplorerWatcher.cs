@@ -68,7 +68,7 @@ internal sealed class ExplorerWatcher : IDisposable
         _ = Task.Run(SeedKnownTabsAsync);
 
         _pollTimer = new System.Threading.Timer(_ => Poll(), null, 2000, 1500);
-        _singleWindowTimer = new System.Threading.Timer(_ => ConsolidateTick(), null, 2500, 800);
+        _singleWindowTimer = new System.Threading.Timer(_ => ConsolidateTick(), null, 2000, 600);
         _log.Info("Explorer watcher started.");
     }
 

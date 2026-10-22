@@ -40,6 +40,12 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
       simply appended again.
 - [ ] Open a folder that is already open (desktop, Start, another app) → its tab is brought
       to the front, **no second tab for it**, and no leftover window.
+- [ ] Watch the strip while folders open: it must not hop through other tabs, and the tab you
+      are looking at must not change its folder. Only the new tab may appear.
+- [ ] Open the very first folder after starting WinExplorer with no window open → exactly one
+      window, exactly one tab (never two windows of the same folder).
+- [ ] With four or more tabs open, open **Home** → it is the first tab, and the folders of all
+      other tabs are unchanged (the old first tab's folder is now on the second tab).
 - [ ] Double-click the **same** folder again → that tab is brought to the front, the tab
       count does not change.
 - [ ] Open folder `A` in window 1, then double-click `A` inside a *different* Explorer

@@ -91,6 +91,16 @@ that fixed order, ahead of normal folders. Opening one of them when it is not a 
 its tab in front of the others; a normal folder is added at the end. Switching this off is a
 checkbox in the settings window (*Keep Home, This PC, Desktop and Downloads at the left*).
 
+Where a tab goes is decided from the tab strip itself, not from the window's child handles:
+those come back in z-order (the active tab first), which is what used to put tabs in the wrong
+place. The strip's order is read with UI Automation (titles only, cached for a moment and
+abandoned if Explorer is busy), and placing a tab is a **single** move — at most one
+`Ctrl+<n>` to make the tab in front of the target current, then `Ctrl+T` — so the strip never
+walks through the other tabs while a folder opens. When a special folder has to become the
+*first* tab, which cannot be inserted in front of anything, the tab that is first now takes the
+new folder and the new tab keeps the old one; the strip ends up in the right order and no
+folder is lost.
+
 Two gestures always beat that rule and produce a separate window that WinExplorer leaves
 alone from then on:
 
@@ -99,6 +109,13 @@ alone from then on:
   The folder that was right-clicked is remembered, so the window that shows up with exactly
   that folder is the deliberate one. A right-click on a *file*, on empty space or in another
   app does not stop anything.
+
+Reading the tabs of a window never activates them either: every shell window item describes
+the tab it owns, so the folders of a background window can be read (and folded in) without the
+user seeing a single tab switch. If a tab's folder cannot be read at all, the window is left
+alone rather than closed — a leftover window is better than losing a tab — but it is retried
+within a second instead of being parked for a minute, so it does not survive as a second
+window.
 
 The folder of a tab is read from the shell automation. The `ShellWindows` object is asked
 first (through its typed interface); `Shell.Application` and the window's own address bar
