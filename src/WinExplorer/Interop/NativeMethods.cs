@@ -436,18 +436,6 @@ internal static class NativeMethods
     internal const uint COINIT_APARTMENTTHREADED = 0x2;
     internal const uint COINIT_DISABLE_OLE1DDE = 0x4;
 
-    // ---- oleacc ---------------------------------------------------------
-    // The last parameter is a VARIANT (not a handle): marshal it as a boxed object.
-    [DllImport("oleacc.dll")]
-    internal static extern int AccessibleObjectFromPoint(POINT point,
-        [MarshalAs(UnmanagedType.Interface)] out IAccessible? accessible,
-        [Out] out object? childId);
-
-    [DllImport("oleacc.dll")]
-    internal static extern int AccessibleObjectFromWindow(nint hwnd, uint objectId,
-        [In] ref Guid interfaceId,
-        [MarshalAs(UnmanagedType.Interface)] out IAccessible? accessible);
-
     // ---- shell known folders ---------------------------------------------
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]

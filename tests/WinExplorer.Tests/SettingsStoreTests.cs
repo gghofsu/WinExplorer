@@ -24,13 +24,11 @@ public class SettingsStoreTests : IDisposable
         var settings = store.Load();
 
         Assert.True(settings.Enabled);
-        Assert.True(settings.InterceptDoubleClick);
         Assert.Equal(AlreadyOpenBehavior.SwitchToExistingTab, settings.WhenAlreadyOpen);
 
-        // One tabbed window is the default: folders open as tabs and extra windows fold in.
+        // One tabbed window is the default: new windows are reopened as tabs,
+        // and the four special folders keep the left of the strip.
         Assert.True(settings.SingleWindowMode);
-        Assert.True(settings.MergeNewWindows);
-        Assert.True(settings.MergeExistingWindows);
         Assert.True(settings.KeepSpecialFoldersFirst);
     }
 
@@ -40,12 +38,12 @@ public class SettingsStoreTests : IDisposable
         var store = new SettingsStore(SettingsFile);
         var settings = store.Load();
         settings.SingleWindowMode = false;
-        settings.MergeExistingWindows = false;
+        settings.KeepSpecialFoldersFirst = false;
         store.Save(settings);
 
         var reloaded = new SettingsStore(SettingsFile).Load();
         Assert.False(reloaded.SingleWindowMode);
-        Assert.False(reloaded.MergeExistingWindows);
+        Assert.False(reloaded.KeepSpecialFoldersFirst);
     }
 
     [Fact]
@@ -53,7 +51,6 @@ public class SettingsStoreTests : IDisposable
     {
         var store = new SettingsStore(SettingsFile);
         var settings = store.Load();
-        settings.InterceptMiddleClick = false;
         settings.WhenAlreadyOpen = AlreadyOpenBehavior.OpenAnotherTab;
         settings.ExcludedPaths.Add(@"C:\Temp");
         settings.DuplicateTabHotkey = "Ctrl+Alt+D";
@@ -61,7 +58,6 @@ public class SettingsStoreTests : IDisposable
 
         var reloaded = new SettingsStore(SettingsFile).Load();
 
-        Assert.False(reloaded.InterceptMiddleClick);
         Assert.Equal(AlreadyOpenBehavior.OpenAnotherTab, reloaded.WhenAlreadyOpen);
         Assert.Contains(@"C:\Temp", reloaded.ExcludedPaths);
         Assert.Equal("Ctrl+Alt+D", reloaded.DuplicateTabHotkey);
@@ -72,10 +68,10 @@ public class SettingsStoreTests : IDisposable
     {
         var store = new SettingsStore(SettingsFile);
         var settings = store.Load();
-        settings.TargetWindow = TargetWindowPolicy.LargestWindow;
+        settings.WhenAlreadyOpen = AlreadyOpenBehavior.OpenAnotherTab;
         store.Save(settings);
 
-        Assert.Contains("LargestWindow", File.ReadAllText(SettingsFile));
+        Assert.Contains("OpenAnotherTab", File.ReadAllText(SettingsFile));
     }
 
     [Fact]

@@ -35,16 +35,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 "Open another tab anyway", "Duplicates allowed.")
         };
 
-        TargetWindowOptions = new[]
-        {
-            new EnumOption<TargetWindowPolicy>(TargetWindowPolicy.ForegroundWindow,
-                "The window I am using"),
-            new EnumOption<TargetWindowPolicy>(TargetWindowPolicy.LastUsedWindow,
-                "The last window I used"),
-            new EnumOption<TargetWindowPolicy>(TargetWindowPolicy.LargestWindow,
-                "The window with the most tabs")
-        };
-
         TogglePauseCommand = new RelayCommand(() =>
         {
             _runtime.ToggleEnabled();
@@ -81,7 +71,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public ObservableCollection<string> Activity { get; }
     public ObservableCollection<string> ExcludedPaths { get; }
     public IReadOnlyList<EnumOption<AlreadyOpenBehavior>> AlreadyOpenOptions { get; }
-    public IReadOnlyList<EnumOption<TargetWindowPolicy>> TargetWindowOptions { get; }
 
     public string? SelectedExcludedPath
     {
@@ -125,82 +114,23 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string DataFolder => AppPaths.DataDirectory;
 
     // ---- Behaviour ------------------------------------------------------
-    public bool InterceptDoubleClick
-    {
-        get => _runtime.Settings.InterceptDoubleClick;
-        set => SetSetting(s => s.InterceptDoubleClick = value);
-    }
-
-    public bool InterceptMiddleClick
-    {
-        get => _runtime.Settings.InterceptMiddleClick;
-        set => SetSetting(s => s.InterceptMiddleClick = value);
-    }
-
-    public bool ActivateNewTab
-    {
-        get => _runtime.Settings.ActivateNewTab;
-        set => SetSetting(s => s.ActivateNewTab = value);
-    }
-
-    public bool DedupeAcrossAllWindows
-    {
-        get => _runtime.Settings.DedupeAcrossAllWindows;
-        set => SetSetting(s => s.DedupeAcrossAllWindows = value);
-    }
-
     public AlreadyOpenBehavior WhenAlreadyOpen
     {
         get => _runtime.Settings.WhenAlreadyOpen;
         set => SetSetting(s => s.WhenAlreadyOpen = value);
     }
 
-    public TargetWindowPolicy TargetWindow
-    {
-        get => _runtime.Settings.TargetWindow;
-        set => SetSetting(s => s.TargetWindow = value);
-    }
-
     // ---- Windows --------------------------------------------------------
     public bool SingleWindowMode
     {
         get => _runtime.Settings.SingleWindowMode;
-        set => SetSetting(s =>
-        {
-            s.SingleWindowMode = value;
-
-            // One window only works with folding on, so switching the mode on turns the two
-            // folding switches back on as well.
-            if (value)
-            {
-                s.MergeNewWindows = true;
-                s.MergeExistingWindows = true;
-            }
-        });
+        set => SetSetting(s => s.SingleWindowMode = value);
     }
 
     public bool KeepSpecialFoldersFirst
     {
         get => _runtime.Settings.KeepSpecialFoldersFirst;
         set => SetSetting(s => s.KeepSpecialFoldersFirst = value);
-    }
-
-    public bool MergeExistingWindows
-    {
-        get => _runtime.Settings.MergeExistingWindows;
-        set => SetSetting(s => s.MergeExistingWindows = value);
-    }
-
-    public bool MergeNewWindows
-    {
-        get => _runtime.Settings.MergeNewWindows;
-        set => SetSetting(s => s.MergeNewWindows = value);
-    }
-
-    public bool KeepVirtualFoldersAsWindows
-    {
-        get => _runtime.Settings.KeepVirtualFoldersAsWindows;
-        set => SetSetting(s => s.KeepVirtualFoldersAsWindows = value);
     }
 
     public bool TakeOverWinE

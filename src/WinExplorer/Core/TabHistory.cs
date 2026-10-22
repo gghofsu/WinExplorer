@@ -62,6 +62,34 @@ public sealed class TabHistory
         }
     }
 
+    /// <summary>
+    /// True when the folder was recorded as closed within the last
+    /// <paramref name="maxAgeMs"/> milliseconds. Used to recognise a tab the user dragged
+    /// out of a window: closing the tab and the new window appear within moments of each
+    /// other, and that window must stay a window.
+    /// </summary>
+    public bool WasClosedRecently(string? path, int maxAgeMs)
+    {
+        var normalized = PathNormalizer.Normalize(path);
+        if (string.IsNullOrEmpty(normalized))
+            return false;
+
+        var cutoff = DateTimeOffset.Now.AddMilliseconds(-maxAgeMs);
+        lock (_gate)
+        {
+            foreach (var item in _items)
+            {
+                if (item.ClosedAt < cutoff)
+                    break;
+
+                if (string.Equals(item.Path, normalized, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>Removes a folder from the history (e.g. it was reopened by the user).</summary>
     public void Forget(string? path)
     {

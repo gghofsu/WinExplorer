@@ -1,7 +1,10 @@
 # How WinExplorer works
 
 This is the technical companion to the README: what WinExplorer actually does to File
-Explorer, which APIs it uses, and why the fallbacks are there.
+Explorer, which APIs it uses, and why the fallbacks are there. The engine is a hand-written
+port of [w4po/ExplorerTabUtility](https://github.com/w4po/ExplorerTabUtility)'s watcher
+(the COM interop is declared by hand because `tlbimp` type libraries are not available in a
+cross-platform build).
 
 Everything below refers to *Windows 11 22H2 and newer*, the first builds whose Explorer has
 tabs. On older builds there is no `ShellTabWindowClass` child window and a tab cannot be
@@ -12,33 +15,86 @@ created; WinExplorer detects that and opens a window instead.
 ## 1. The moving parts
 
 ```
-             mouse / keyboard                     other apps, desktop, Start
-                     │                                        │
-        ┌────────────▼────────────┐                ┌──────────▼─────────────┐
-        │  MouseHook / KeyboardHook│                │  shell verb            │
-        │  (low level, UI thread)  │                │  "open" (optional)     │
-        └────────────┬────────────┘                └──────────┬─────────────┘
-                     │                                        │  WinExplorer.exe --open "%1"
-                     │  FolderClick                           │  (second process)
-                     ▼                                        ▼
-              ┌────────────────────────── ExplorerService (policy) ─────────────────────┐
-              │  already open?  → switch          otherwise → new tab / new window      │
-              └──────────────────────────────┬─────────────────────────────────────────┘
-                                             │
-                              ┌──────────────▼──────────────┐
-                              │  TabController (mechanics)  │
-                              │  WM_COMMAND + Shell.Application
-                              └──────────────┬──────────────┘
-                                             │
-                                     File Explorer (explorer.exe)
+   desktop, Start, Win+E, other apps                  context menu / command line
+                 │                                               │
+                 │ Windows creates a new                         │  WinExplorer.exe --open "%1"
+                 │ Explorer window                               │  (second process → named pipe)
+                 ▼                                               ▼
+   ┌──────────────────────────┐                   ┌─────────────────────────────┐
+   │ ShellWindows              │                   │  ExplorerService (policy)   │
+   │ WindowRegistered event    │──────────────────▶│  already open? → switch     │
+   │ + EVENT_OBJECT_SHOW hook  │   fold request    │  otherwise → tab / window   │
+   └──────────────────────────┘                   └──────────────┬──────────────┘
+                                                                  │
+                                                   ┌──────────────▼──────────────┐
+                                                   │  ExplorerWatcher (engine)   │
+                                                   │  WM_COMMAND + IWebBrowser2  │
+                                                   └──────────────┬──────────────┘
+                                                                  │
+                                                        File Explorer (explorer.exe)
 ```
 
-- **One process owns the hooks.** A second `WinExplorer.exe` (started by the context menu, a
-  shortcut or the command line) connects to the running helper over a named pipe and exits.
-- **Two dedicated STA threads** (`StaExecutor`) do all shell COM work, so the UI thread never
-  blocks on Explorer.
+- **One process owns the engine.** A second `WinExplorer.exe` (started by the context menu,
+  a shortcut or the command line) connects to the running helper over a named pipe and exits.
+- **One dedicated, message-pumping STA thread** (`StaExecutor`) does all shell COM work:
+  the `ShellWindows` collection, the event sinks, reading locations, `Navigate2`. Without a
+  pump, Explorer's cross-apartment automation calls hang or return nothing.
 
-## 2. Creating a tab
+## 2. Tracking tabs: `ShellWindows`
+
+Every File Explorer tab announces itself in the shell's `ShellWindows` collection as an
+`IWebBrowser2` object. The watcher subscribes to the collection's connection point
+(`DShellWindowsEvents`), so **`WindowRegistered`** fires the instant a new tab or window
+exists — no polling, no mouse hooks.
+
+For each entry the watcher stores:
+
+- the **frame** window: the entry's `HWND` property (`CabinetWClass`),
+- the **tab** window: `IServiceProvider.QueryService(SID_STopLevelBrowser)` →
+  `IShellBrowser.GetWindow()` (`ShellTabWindowClass`),
+- the **location**: `LocationURL`, or `Document.Folder.Self.Path` for virtual folders
+  (This PC, Recycle Bin, …) that report no URL,
+- a `NavigateComplete2` / `OnQuit` event sink, which keeps the location fresh and records
+  closed folders into the reopen history.
+
+Already-seen entries are marked with a custom property (`PutProperty("WinExplorerSeen")`),
+so enumerating the collection again never double-registers a tab. A 5-second health check
+prunes dead entries, re-enumerates missed windows, and rebuilds everything when
+`explorer.exe` itself restarts.
+
+## 3. Folding a new window into a tab
+
+Windows creates a window in every situation WinExplorer cares about: a folder opened from
+the desktop, Start, the taskbar, Win+E, a file dialog, another application. The watcher
+turns that window into a tab:
+
+1. **Hide before paint.** An `EVENT_OBJECT_SHOW` win-event hook sees the new
+   `CabinetWClass` window before it is drawn and makes it fully transparent (layered,
+   alpha 0). If that fails, nothing breaks — the window just flashes once.
+2. **`WindowRegistered` fires.** The watcher finds the unseen entry (polling the collection
+   for up to 2.5 s), waits briefly for its location, and decides whether to fold. It folds
+   only a *single-tab* window that is not the main window, when at least one other tab
+   exists to fold into.
+3. **Open as tab.** The normal open policy runs: if the folder is already shown in a
+   tracked tab, that tab is selected; otherwise the main window gets a new tab which is
+   navigated to the folder (section 4).
+4. **Quit the surplus window** via its `IWebBrowser2.Quit()`. If anything failed, the
+   hidden window is made visible again instead — nothing is ever lost or left invisible.
+
+It deliberately leaves windows alone when:
+
+- the app is paused or the single-window switch is off,
+- the first 5 seconds after start (session restore),
+- `Ctrl+Shift` is held at that moment (the explicit "I want a window" gesture),
+- the location is unknown, Control Panel, or on the exclusion list,
+- the window has more than one tab (the user assembled it),
+- the folder appears in the closed-tabs history of the last 2 seconds — that is a tab the
+  user just **dragged out** of a window, which must stay a window,
+- there is no other window to fold into.
+
+A safety net reveals any window that stayed hidden for more than ~4 seconds.
+
+## 4. Creating and addressing tabs
 
 Explorer has no documented API for "add a tab". It does, however, handle its own
 accelerators through window messages, and the internal command ids are stable across builds
@@ -46,37 +102,29 @@ so far:
 
 | Message | Sent to | Effect |
 |---|---|---|
-| `WM_COMMAND(0xA21B)` | the active `ShellTabWindowClass` window | same as **Ctrl+T** (new tab) |
-| `WM_COMMAND(0xA221, n)` | the `CabinetWClass` window | same as **Ctrl+n** (select tab *n*) |
+| `WM_COMMAND(0xA21B)` | a `ShellTabWindowClass` window | same as **Ctrl+T** (new tab) |
+| `WM_COMMAND(0xA221, n)` | the `CabinetWClass` window | same as **Ctrl+n** (select tab *n*, 1-based) |
 | `WM_COMMAND(0xA021)` | a `ShellTabWindowClass` window | same as **Ctrl+W** (close tab) |
 
-So creating a tab is:
+Creating a tab:
 
 1. Snapshot the window's `ShellTabWindowClass` children.
-2. `PostMessage(activeTab, WM_COMMAND, 0xA21B, 0)`.
-3. Poll for a child window that was not in the snapshot (≤ 2.5 s). That handle *is* the new
-   tab.
-4. Navigate it (see below), verify, and select it.
+2. `PostMessage(tab, WM_COMMAND, 0xA21B)`.
+3. Poll for a child window that was not in the snapshot (≤ 2 s) — that handle *is* the new
+   tab. Explorer appends it at the end of the strip and selects it.
+4. Wait for its `ShellWindows` entry (the `WindowRegistered` handler usually has it
+   already), then `Navigate2(path)` on that entry. Paths containing `#` are passed as a
+   `Shell.Application.NameSpace(path)` folder object because the URL form mangles them.
 
-If no tab appears, WinExplorer retries with a synchronous message, and finally opens a normal
-window so the user's folder never disappears.
+Selecting a specific tab uses `0xA221`: the window's child z-order only reveals which tab
+is *active*, so the watcher selects position 0, 1, 2, … and watches the active tab change
+until the right handle is in front — exactly ETU's approach.
 
-## 3. Navigating one specific tab
+If Explorer refuses to create a tab, the folder opens in a normal window so it never
+disappears. All open/fold operations are serialised by one semaphore: two folders arriving
+together cannot race into duplicates.
 
-Explorer publishes every tab through the shell automation object: each entry of
-`Shell.Application.Windows` has an `HWND` equal to the tab's `ShellTabWindowClass` handle
-(on Windows 10 the entry belongs to the window instead). `ShellCom` matches an entry by HWND
-and calls `Navigate2(path)`, then waits until the shell reports the expected location.
-
-`Navigate2` accepts plain paths, `file:///` URLs and `shell:::{GUID}` namespace paths, which
-is why This PC, Downloads and OneDrive also work.
-
-Selection uses the `0xA221` command. Because the tab strip order is not the same as the
-window's z-order, WinExplorer sends `Ctrl+1`, checks which tab became active, then `Ctrl+2`,
-and so on until the target is in front — with a guard that never sends an index beyond the
-current tab count (Explorer has a known crash when that happens while tabs are being created).
-
-## 4. Detecting "this folder is already open"
+## 5. Detecting "this folder is already open"
 
 The naive approach — compare the location strings — fails for:
 
@@ -86,8 +134,8 @@ The naive approach — compare the location strings — fails for:
 - namespace items (`shell:::{20D04FE0-...}` vs the localized display name)
 - trailing separators, forward slashes, `%VARS%`, `file:///C:/My%20Folder`
 
-`PathNormalizer` produces a canonical string first (fast path, covers 95 % of cases), and when
-two strings still differ, `ShellPathComparer` compares them as shell item ids:
+`PathNormalizer` produces a canonical string first (fast path, covers 95 % of cases), and
+when two strings still differ, `ShellPathComparer` compares them as shell item ids:
 
 ```
 IShellFolder desktop = SHGetDesktopFolder()
@@ -96,51 +144,26 @@ pidl2 = desktop.ParseDisplayName(path2)
 desktop.CompareIDs(0, pidl1, pidl2) == 0   →  same folder
 ```
 
-This is exactly how Explorer decides whether two paths are the same folder.
+This is exactly how Explorer decides whether two paths are the same folder. Tabs that are
+currently being folded are never used as a dedupe target, and a matched tab is validated
+with `IsWindow` before it is selected.
 
-## 5. Intercepting double-clicks
+## 6. Keeping Home, This PC, Desktop, Downloads at the left
 
-A `WH_MOUSE_LL` hook sees every mouse event before any window does.
+Explorer can only *append* tabs, so the watcher moves **folders**, not tabs. When a special
+folder (rank 0–3: Home, This PC, Desktop, Downloads) opens as a new tab:
 
-- The **first** `WM_LBUTTONDOWN` is passed through — selection, hover and keyboard focus all
-  behave normally.
-- A second down inside the system double-click time/distance is treated as a double-click.
-  WinExplorer blocks that down (and its up) so Explorer never starts its own navigation.
-- If the click was not inside a File Explorer tab, or was in the navigation pane, the hook
-  passes it through untouched. The check is a pure window-hierarchy test plus one MSAA query
-  (`AccessibleObjectFromPoint` → `accRole` / `accName`), which is exactly what screen readers
-  use; file rows report themselves as list items whose name is the display name.
-- The folder path is then `current tab location + display name`. The resolve step happens on
-  a worker thread, never inside the hook.
-- If the row turned out **not** to be a folder (a file, a shortcut, a virtual item), the
-  click is replayed with `SendInput`. Injected events carry `LLKHF_INJECTED`, so the hook
-  ignores them and Windows opens the file exactly as it would have.
-
-Middle-click uses the same resolution; the new tab is created without activating it, which
-matches Windows' "open in background tab" behaviour.
-
-## 6. Folding windows into tabs (optional)
-
-Windows still creates a window in several situations that cannot be intercepted: a folder
-double-clicked on the desktop, opened from Start, from another application, or with Win+E.
-WinExplorer listens for `EVENT_OBJECT_SHOW` on `CabinetWClass` windows, waits for the location
-to become available, then
-
-1. hides the new window (layered alpha 0) so it never flashes,
-2. runs the normal open policy (switch to an existing tab if the folder is already open, else
-   create a tab,
-3. closes the window it consumed.
-
-It deliberately leaves windows alone when
-
-- the option is off, WinExplorer is paused, or the first 8 seconds after start (session
-  restore),
-- `Ctrl+Shift` is held at that moment,
-- the right mouse button was released within the last 1.2 s — that almost always means
-  "Open in new window" from the context menu,
-- the window has more than one tab (the user assembled it, or dragged a tab out),
-- the folder was closed/ detached within the last 2 s (re-opening a tab also creates a window),
-- the location is on the exclusion list, or a virtual folder with that option enabled.
+1. Count `k` = tracked specials in that window with a smaller rank (the target position)
+   and `m` = all tracked specials. Specials always occupy positions `0..m-1` because this
+   code is the only thing that places them.
+2. Resolve the tab handles at positions `k..m` by selecting each position once and watching
+   the active tab change; every position must map to a tracked entry with a known folder,
+   otherwise the whole move is abandoned and the tab simply stays at the end (nothing is
+   ever lost for the sake of ordering).
+3. Shift the leading folders one tab to the right — at most four navigations, since the
+   special group is never larger — with the first normal folder (if any) moving into the
+   new tab at the end of the strip.
+4. Navigate the tab at position `k` to the special folder and select it.
 
 ## 7. The optional default-handler integration
 
@@ -164,29 +187,31 @@ the `DelegateExecute` / `DropTarget` COM handlers that make naive `open\command`
 on Windows 11.
 
 Because this path ends in `WinExplorer.exe --open …`, the request arrives through the named
-pipe at the already running helper — a double-click costs one process start, not a new helper.
+pipe at the already running helper. (With the single-window switch on this integration is a
+nicety, not a necessity — a window the handler did not catch is folded in anyway.)
 
 ## 8. Threading and lifetime
 
 | Thread | Owns |
 |---|---|
-| WPF UI thread | low-level hooks (they need a message pump), tray icon, settings window |
-| `WinExplorer.Shell.Query` (STA) | every shell query: tab locations, PIDL comparison, MSAA-friendly COM |
-| `WinExplorer.Shell.Navigate` (STA) | `Navigate2` calls, which can block while a folder loads |
-| Thread pool | merge workers, IPC connections, click resolution |
+| WPF UI thread | keyboard hook (needs a message pump), tray icon, settings window |
+| `WinExplorer.Shell` (STA, pumping) | `ShellWindows`, event sinks, locations, `Navigate2`, PIDL comparison |
+| Thread pool | fold workers, IPC connections, the open policy |
 
-Tab operations are serialised by a semaphore: creating two tabs at the same time is the
-fastest way to confuse Explorer.
+The `WindowRegistered` handler leaves the COM event thread immediately (the shell is still
+inside its own `Register` call) and does its work on the pool, funnelling every COM touch
+back to the STA thread. Open/fold operations are serialised by a semaphore.
 
 ## 9. Failure behaviour
 
 Every step that depends on undocumented behaviour is verified:
 
-- no new tab window appeared → retry synchronously → new window
-- tab created but `Navigate2` refused → tab is still selected and the failure is logged
-- location never confirmed → accepted if the shell reports *any* location (short names and
-  junctions are legitimate differences), logged otherwise
-- window fold failed halfway → the hidden window is made visible again
+- no new tab window appeared → a normal window opens instead
+- the new tab never registered with the shell → the tab is closed again, a window opens
+- a fold failed halfway → the hidden window is made visible again
+- a special-folder placement could not resolve every leading tab → the tab stays at the end
+- the shell stops answering (Explorer restart) → the health check rebuilds the COM objects
 
 The log (`%APPDATA%\WinExplorer\WinExplorer.log`) contains one line per action, which makes
-"why did that open a window?" answerable.
+"why did that open a window?" answerable. `WinExplorer.exe --probe` dumps every window, tab
+and location the engine can see.

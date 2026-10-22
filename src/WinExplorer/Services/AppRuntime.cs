@@ -1,7 +1,5 @@
-using System.IO;
 using WinExplorer.Core;
 using WinExplorer.Hooks;
-using WinExplorer.Interop;
 using WinExplorer.Shell;
 
 namespace WinExplorer.Services;
@@ -15,10 +13,9 @@ internal sealed class AppRuntime : IDisposable
 {
     private readonly Logger _log;
     private readonly SettingsStore _settings;
-    private readonly TabController _tabs;
+    private readonly TabHistory _history;
+    private readonly ExplorerWatcher _watcher;
     private readonly ExplorerService _service;
-    private readonly SingleWindowEngine _watcher;
-    private readonly MouseHook _mouseHook;
     private readonly KeyboardHook _keyboardHook;
     private readonly ShellIntegration _shell;
     private readonly StartupRegistration _startup;
@@ -29,18 +26,16 @@ internal sealed class AppRuntime : IDisposable
     {
         _log = log;
         _settings = settings;
-        _tabs = new TabController(log);
-        _service = new ExplorerService(_tabs, settings, log);
-        _watcher = new SingleWindowEngine(log, _service, _tabs);
-        _mouseHook = new MouseHook(log, () => _settings.Current, HandleFolderClickAsync);
+        _history = new TabHistory();
+        _watcher = new ExplorerWatcher(log, settings, _history);
+        _service = new ExplorerService(_watcher, settings, log, _history);
         _keyboardHook = new KeyboardHook(log, () => _settings.Current, OnHotkey);
         _shell = new ShellIntegration(log);
         _startup = new StartupRegistration(log);
 
         _service.Opened += (_, result) =>
             Activity?.Invoke(this, ExplorerService.Describe(result));
-        _tabs.Activity += (_, message) => Activity?.Invoke(this, message);
-        _watcher.Merged += (_, message) => Activity?.Invoke(this, message);
+        _watcher.Activity += (_, message) => Activity?.Invoke(this, message);
         _service.Status += (_, message) => Status?.Invoke(this, message);
     }
 
@@ -63,6 +58,8 @@ internal sealed class AppRuntime : IDisposable
 
     public StartupRegistration Startup => _startup;
 
+    internal ExplorerWatcher Watcher => _watcher;
+
     public bool IsEnabled => _settings.Current.Enabled;
 
     public void Start()
@@ -72,7 +69,7 @@ internal sealed class AppRuntime : IDisposable
         _started = true;
 
         ApplyHooks();
-        _watcher.Start();
+        _ = _watcher.StartAsync();
         _log.Info($"WinExplorer started (enabled: {_settings.Current.Enabled}).");
         Status?.Invoke(this, _settings.Current.Enabled ? "WinExplorer is active." : "WinExplorer is paused.");
     }
@@ -97,11 +94,6 @@ internal sealed class AppRuntime : IDisposable
     private void ApplyHooksCore()
     {
         var settings = _settings.Current;
-
-        if (settings.Enabled && (settings.InterceptDoubleClick || settings.InterceptMiddleClick))
-            _mouseHook.Start();
-        else
-            _mouseHook.Stop();
 
         if (settings.Enabled && (HasHotkeys(settings) || settings.TakeOverWinE))
             _keyboardHook.Start();
@@ -189,108 +181,6 @@ internal sealed class AppRuntime : IDisposable
         });
     }
 
-    /// <summary>
-    /// Turns "the user double-clicked a folder row" into an open request, or replays the
-    /// click when the row was not a folder after all.
-    /// </summary>
-    private async Task HandleFolderClickAsync(FolderClick click)
-    {
-        var settings = _settings.Current;
-
-        if (!settings.Enabled)
-        {
-            Replay(click);
-            return;
-        }
-
-        var location = await _tabs.GetTabLocationAsync(click.Tab).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(location))
-            location = await _tabs.GetActiveLocationAsync(click.Window).ConfigureAwait(false);
-
-        var folder = ResolveFolder(location, click.ItemName);
-        if (folder is null || settings.IsExcluded(folder))
-        {
-            Replay(click);
-            return;
-        }
-
-        // Both click kinds reuse an open tab: a middle-click must not duplicate a folder
-        // either (it only differs in that the resulting tab stays in the background).
-        const OpenMode mode = OpenMode.ReuseExistingTab;
-
-        var origin = click.Kind == FolderClickKind.MiddleClick ? OpenOrigin.MiddleClick : OpenOrigin.DoubleClick;
-        var request = new OpenRequest
-        {
-            Path = folder,
-            Mode = mode,
-            Origin = origin,
-            PreferredWindow = click.Window,
-            // A middle-click mimics Windows: the tab opens in the background.
-            Activate = click.Kind != FolderClickKind.MiddleClick
-        };
-
-        _log.Debug($"{origin} -> '{folder}' (mode: {mode}).");
-
-        OpenResult result;
-        try
-        {
-            result = await _service.OpenAsync(request).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            _log.Error("Folder click failed", ex);
-            Replay(click);
-            return;
-        }
-
-        if (!result.Succeeded)
-            Replay(click);
-    }
-
-    /// <summary>Combines the current folder with the display name of the clicked row.</summary>
-    internal static string? ResolveFolder(string? currentLocation, string? itemName)
-    {
-        if (string.IsNullOrWhiteSpace(currentLocation) || string.IsNullOrWhiteSpace(itemName))
-            return null;
-
-        if (PathNormalizer.IsShellNamespace(currentLocation))
-            return null;
-
-        // Display names never contain separators; reject anything that tries to escape the
-        // current folder.
-        if (itemName.IndexOfAny(new[] { '\\', '/' }) >= 0 ||
-            itemName is "." or "..")
-        {
-            return null;
-        }
-
-        try
-        {
-            // Display names can differ in punctuation/case; match against the real entries
-            // first so the result keeps the casing that is stored on disk.
-            var match = Directory.EnumerateDirectories(currentLocation)
-                .FirstOrDefault(d => string.Equals(Path.GetFileName(d), itemName, StringComparison.OrdinalIgnoreCase));
-            if (match is not null)
-                return PathNormalizer.Normalize(match);
-
-            var candidate = Path.Combine(currentLocation, itemName);
-            return Directory.Exists(candidate) ? PathNormalizer.Normalize(candidate) : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private void Replay(FolderClick click)
-    {
-        _log.Debug($"Replaying {click.Kind} at ({click.X},{click.Y}).");
-        if (click.Kind == FolderClickKind.MiddleClick)
-            MouseHook.ReplayMiddleClick(click.X, click.Y);
-        else
-            MouseHook.ReplayDoubleClick(click.X, click.Y);
-    }
-
     // ------------------------------------------------------------------
     // IPC
     // ------------------------------------------------------------------
@@ -352,7 +242,7 @@ internal sealed class AppRuntime : IDisposable
 
                 case "consolidate":
                 {
-                    var folded = await _service.ConsolidateWindowsAsync(window).ConfigureAwait(false);
+                    var folded = await _service.ConsolidateWindowsAsync(window, force: true).ConfigureAwait(false);
                     return new IpcResponse
                     {
                         Ok = true,
@@ -386,10 +276,8 @@ internal sealed class AppRuntime : IDisposable
             return;
         _disposed = true;
 
-        try { _watcher.Stop(); } catch { /* ignore */ }
-        try { _mouseHook.Dispose(); } catch { /* ignore */ }
         try { _keyboardHook.Dispose(); } catch { /* ignore */ }
-        try { _tabs.Dispose(); } catch { /* ignore */ }
+        try { _watcher.Dispose(); } catch { /* ignore */ }
         try { _service.Dispose(); } catch { /* ignore */ }
         _log.Info("WinExplorer stopped.");
     }

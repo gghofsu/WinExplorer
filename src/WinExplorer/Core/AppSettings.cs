@@ -10,70 +10,26 @@ public enum AlreadyOpenBehavior
     OpenAnotherTab = 1
 }
 
-/// <summary>Which window receives the new tab.</summary>
-public enum TargetWindowPolicy
-{
-    /// <summary>The File Explorer window that had focus when the folder was opened.</summary>
-    ForegroundWindow = 0,
-
-    /// <summary>The most recently used File Explorer window.</summary>
-    LastUsedWindow = 1,
-
-    /// <summary>The window that already holds the most tabs (keeps one window growing).</summary>
-    LargestWindow = 2
-}
-
 /// <summary>Settings persisted to <c>%APPDATA%\WinExplorer\settings.json</c>.</summary>
 public sealed class AppSettings
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
 
     // ---- Core behaviour -------------------------------------------------
 
     /// <summary>Master switch for everything the app does to Explorer.</summary>
     public bool Enabled { get; set; } = true;
 
-    /// <summary>Intercept double-clicks on folders inside a File Explorer window.</summary>
-    public bool InterceptDoubleClick { get; set; } = true;
-
-    /// <summary>Intercept middle-clicks (Windows would open a background tab).</summary>
-    public bool InterceptMiddleClick { get; set; } = true;
-
-    /// <summary>Bring a newly created tab to the front.</summary>
-    public bool ActivateNewTab { get; set; } = true;
-
     /// <summary>Repeated opens of the same folder: switch to the tab or duplicate it.</summary>
     public AlreadyOpenBehavior WhenAlreadyOpen { get; set; } = AlreadyOpenBehavior.SwitchToExistingTab;
 
-    /// <summary>Search every File Explorer window for an open copy, not just the target one.</summary>
-    public bool DedupeAcrossAllWindows { get; set; } = true;
-
-    /// <summary>Create new tabs in the window that last had focus.</summary>
-    public TargetWindowPolicy TargetWindow { get; set; } = TargetWindowPolicy.ForegroundWindow;
-
-    // ---- Windows --------------------------------------------------------
-
     /// <summary>
-    /// Keep exactly one File Explorer window. Every folder opens as a tab in that window and
-    /// extra windows are folded in, unless the user explicitly asked for a window
-    /// (Shift+double-click, or right-click → Open in new window).
+    /// Keep exactly one File Explorer window. Every new window Explorer creates - the
+    /// desktop, Start, the taskbar, Win+E, another app - is reopened as a tab of the window
+    /// that is already there, unless the user explicitly asked for a window
+    /// (Ctrl+Shift while it opens).
     /// </summary>
     public bool SingleWindowMode { get; set; } = true;
-
-    /// <summary>Fold newly appearing Explorer windows into tabs.</summary>
-    public bool MergeNewWindows { get; set; } = true;
-
-    /// <summary>
-    /// Also fold windows that are already open (not just new ones), so the desktop ends up
-    /// with a single tabbed window. Only used while <see cref="SingleWindowMode"/> is on.
-    /// </summary>
-    public bool MergeExistingWindows { get; set; } = true;
-
-    /// <summary>
-    /// Do not merge windows whose location is a virtual shell folder. Ignored while
-    /// <see cref="SingleWindowMode"/> is on: Home and This PC belong in tabs like any folder.
-    /// </summary>
-    public bool KeepVirtualFoldersAsWindows { get; set; } = true;
 
     /// <summary>
     /// Keep Home, This PC, Desktop and Downloads at the left of the tab strip, in that order
@@ -116,16 +72,8 @@ public sealed class AppSettings
     {
         SchemaVersion = SchemaVersion,
         Enabled = Enabled,
-        InterceptDoubleClick = InterceptDoubleClick,
-        InterceptMiddleClick = InterceptMiddleClick,
-        ActivateNewTab = ActivateNewTab,
         WhenAlreadyOpen = WhenAlreadyOpen,
-        DedupeAcrossAllWindows = DedupeAcrossAllWindows,
-        TargetWindow = TargetWindow,
         SingleWindowMode = SingleWindowMode,
-        MergeNewWindows = MergeNewWindows,
-        MergeExistingWindows = MergeExistingWindows,
-        KeepVirtualFoldersAsWindows = KeepVirtualFoldersAsWindows,
         KeepSpecialFoldersFirst = KeepSpecialFoldersFirst,
         TakeOverWinE = TakeOverWinE,
         StartWithWindows = StartWithWindows,

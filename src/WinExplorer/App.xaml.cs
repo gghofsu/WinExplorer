@@ -706,55 +706,33 @@ public partial class App : Application
             builder.AppendLine($"Windows   : {Environment.OSVersion.VersionString}");
             builder.AppendLine();
 
-            var tabs = new WinExplorer.Shell.TabController(_log!);
-            try
+            var windows = WinExplorer.Shell.ExplorerWindows.GetWindows();
+            builder.AppendLine($"Explorer windows ({windows.Count})");
+            foreach (var window in windows)
             {
-                builder.AppendLine("Shell");
-                builder.AppendLine("  " + tabs.DescribeShellHealth());
-                builder.AppendLine("  shell threads: " + WinExplorer.Services.StaExecutor.HealthSummary());
-                builder.AppendLine();
+                var tabHandles = WinExplorer.Shell.ExplorerWindows.GetTabs(window);
+                builder.AppendLine($"  0x{window:X}  '{WinExplorer.Interop.NativeMethods.GetClassName(window)}'  " +
+                                   $"{tabHandles.Count} tab(s)");
+                foreach (var tab in tabHandles)
+                    builder.AppendLine($"    tab 0x{tab:X}");
+            }
+            builder.AppendLine();
 
-                var windows = WinExplorer.Shell.ExplorerWindows.GetWindows();
-                builder.AppendLine($"Windows ({windows.Count})");
+            // A short lived watcher reads what the shell reports for every tab - the very
+            // same engine the helper uses, so the probe shows exactly what the helper sees.
+            using (var watcher = new WinExplorer.Shell.ExplorerWatcher(_log!, _store!, new TabHistory()))
+            {
+                watcher.StartAsync().GetAwaiter().GetResult();
+                Thread.Sleep(750);
 
-                foreach (var window in windows)
-                {
-                    builder.AppendLine($"  0x{window:X}  '{WinExplorer.Interop.NativeMethods.GetClassName(window)}'");
-                    builder.AppendLine($"    MSAA(window) : {WinExplorer.Shell.AddressBarText.TryRead(window) ?? "(nothing)"}");
-                    builder.AppendLine($"    UIA(window)  : {WinExplorer.Shell.UiaAddressBar.TryRead(window, maxAgeMs: 0) ?? "(nothing)"}");
-                    builder.AppendLine($"    IESW(window) : {WinExplorer.Shell.ShellWindowsQuery.ProbePropertyErrors(window)}");
-
-                    var tabHandles = WinExplorer.Shell.ExplorerWindows.GetTabs(window);
-                    if (tabHandles.Count == 0)
-                    {
-                        builder.AppendLine("    (no tab windows found)");
-                        continue;
-                    }
-
-                    foreach (var tab in tabHandles)
-                    {
-                        var location = tabs.GetTabLocationAsync(tab).GetAwaiter().GetResult();
-                        builder.AppendLine($"    tab 0x{tab:X}  {location ?? "(no folder reported)"}");
-
-                        // Each engine on its own, so a report says exactly which one is blind.
-                        builder.AppendLine($"      MSAA : {WinExplorer.Shell.AddressBarText.TryRead(tab) ?? "(nothing)"}");
-                        builder.AppendLine($"      UIA  : {WinExplorer.Shell.UiaAddressBar.TryRead(tab, maxAgeMs: 0) ?? "(nothing)"}");
-                        builder.AppendLine($"      IESW : {WinExplorer.Shell.ShellWindowsQuery.ProbePropertyErrors(tab)}");
-                    }
-                }
-
-                builder.AppendLine();
-                builder.AppendLine("Shell automation");
-                builder.AppendLine("  " + WinExplorer.Shell.ShellCom.Describe());
-
-                builder.AppendLine("  IShellWindows items (each should own one tab):");
-                foreach (var line in WinExplorer.Shell.ShellCom.DescribeItems())
+                builder.AppendLine($"Shell windows the engine tracks ({watcher.TrackedTabCount})");
+                foreach (var line in watcher.DescribeTabs())
                     builder.AppendLine("  " + line);
             }
-            finally
-            {
-                tabs.Dispose();
-            }
+
+            builder.AppendLine();
+            builder.AppendLine("Shell threads");
+            builder.AppendLine("  " + WinExplorer.Services.StaExecutor.HealthSummary());
 
             File.WriteAllText(path, builder.ToString(), System.Text.Encoding.UTF8);
             ConsoleHelper.WriteLine(builder.ToString());
