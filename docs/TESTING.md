@@ -79,6 +79,10 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
       in the one window (a file right-click must not pin anything).
 - [ ] Right-click a folder, pick *Properties*, then open a folder from Start → it becomes a
       tab in the one window.
+- [ ] With one window showing folder A, open folder B from the desktop → B is a tab, **A is
+      still showing A** (not Home), and A is the tab in front again.
+- [ ] Open three folders in a row → three tabs with three correct folders, no *Home* tab,
+      and the window never flickers through Home.
 - [ ] Open a folder while Explorer is busy (a large folder still loading) → if Windows draws
       a window it disappears into a tab within a couple of seconds, and the next folder opens
       as a tab (the tab retry recovers instead of giving up).

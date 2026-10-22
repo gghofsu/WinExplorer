@@ -30,6 +30,10 @@ internal sealed class ExplorerService : IDisposable
     // pause instead of every second, so a stubborn window cannot cause a create/close loop.
     private readonly Dictionary<nint, long> _foldBackoff = new();
 
+    // Windows currently being folded. The window hook and the periodic pass can both see the
+    // same window; without this they would each create a tab for it.
+    private readonly HashSet<nint> _folding = new();
+
     public ExplorerService(TabController tabs, SettingsStore settings, Logger log, TabHistory? history = null)
     {
         _tabs = tabs;
@@ -284,7 +288,7 @@ internal sealed class ExplorerService : IDisposable
         }
 
         string? location = null;
-        var deadline = Environment.TickCount64 + 2500;
+        var deadline = Environment.TickCount64 + 1200;
         while (Environment.TickCount64 < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -599,6 +603,30 @@ internal sealed class ExplorerService : IDisposable
 
         if (IsBackingOff(window))
             return false;
+
+        lock (_pinGate)
+        {
+            if (!_folding.Add(window))
+            {
+                _log.Debug($"Window 0x{window:X} is already being folded.");
+                return false;
+            }
+        }
+
+        try
+        {
+            return await FoldWindowIntoCoreAsync(window, target, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_pinGate)
+                _folding.Remove(window);
+        }
+    }
+
+    private async Task<bool> FoldWindowIntoCoreAsync(nint window, nint target, CancellationToken cancellationToken)
+    {
+        var settings = _settings.Current;
 
         var locations = await _tabs.GetTabLocationsAsync(window, cancellationToken).ConfigureAwait(false);
 

@@ -68,7 +68,7 @@ internal sealed class ExplorerWatcher : IDisposable
         _ = Task.Run(SeedKnownTabsAsync);
 
         _pollTimer = new System.Threading.Timer(_ => Poll(), null, 2000, 1500);
-        _singleWindowTimer = new System.Threading.Timer(_ => ConsolidateTick(), null, 3000, 1200);
+        _singleWindowTimer = new System.Threading.Timer(_ => ConsolidateTick(), null, 2500, 800);
         _log.Info("Explorer watcher started.");
     }
 
@@ -163,7 +163,7 @@ internal sealed class ExplorerWatcher : IDisposable
         }
 
         // Give Explorer a beat to finish creating the window (and its first tab).
-        await Task.Delay(90).ConfigureAwait(false);
+        await Task.Delay(40).ConfigureAwait(false);
 
         if (!NativeMethods.IsWindow(hwnd))
             return;

@@ -56,8 +56,22 @@ internal static class ExplorerWindows
         return tabs;
     }
 
-    /// <summary>The tab the user is looking at: Explorer keeps it at the top of the z-order.</summary>
-    public static nint GetActiveTab(nint windowHwnd) => GetTabs(windowHwnd).FirstOrDefault();
+    /// <summary>
+    /// The tab the user is looking at. Explorer shows exactly one tab window and hides the
+    /// others, so visibility is the reliable answer; z-order (the first child) is the
+    /// fallback for the moment a window is being created.
+    /// </summary>
+    public static nint GetActiveTab(nint windowHwnd)
+    {
+        var tabs = GetTabs(windowHwnd);
+        foreach (var tab in tabs)
+        {
+            if (NativeMethods.IsWindowVisible(tab))
+                return tab;
+        }
+
+        return tabs.FirstOrDefault();
+    }
 
     /// <summary>Walks up from a child window (a view) to its tab and window.</summary>
     public static (nint Tab, nint Window) GetTabAndWindowFromChild(nint childHwnd)
