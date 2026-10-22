@@ -45,9 +45,10 @@ navigates the current tab (Ctrl+double-click opens Explorer's own new tab, as al
 | | |
 |---|---|
 | **New windows become tabs** | Any folder that would open a new Explorer window — the desktop, Start, the taskbar, Win+E, a file dialog, another app, the context menu, the command line — lands as a tab in the window you already have. |
-| **No accidental duplicates** | Opening a folder that is already shown in a tab switches to that tab (and brings its window forward) instead of creating a second copy. |
+| **No accidental duplicates** | Opening a folder that is already shown in a tab switches to that tab — refreshed, and with its window brought forward — instead of creating a second copy. |
 | **Invisible merge** | The surplus window is cloaked by DWM before it is ever painted (from a hook thread that does nothing else), so folding a window into a tab happens without anything flashing on screen. |
-| **New tabs come to the front** | A tab opened inside Explorer with Ctrl+T, a middle-click or "Open in new tab" is selected immediately; if its folder is already open, the duplicate tab closes and the existing tab is selected. |
+| **Switches are fresh** | Every switch to an already open tab refreshes it (F5) on the way, so the tab never shows the folder as it looked when it was last visited. |
+| **New tabs come to the front** | A tab opened inside Explorer with Ctrl+T, a middle-click or "Open in new tab" is selected immediately; if its folder is already open — even when the folder only finishes loading afterwards — the duplicate tab closes and the existing tab is selected and refreshed. |
 | **Home / This PC / Desktop / Downloads first** | These four folders are always placed at the left of the tab strip, in that order (Home, This PC, Desktop, Downloads), in front of every other tab — the way Explorer's own windows start at Home. This also applies when one of them is opened as a new tab inside the current window. |
 | **Duplicates on demand** | Only an explicit request creates a second tab for the same folder: the duplicate shortcut, or `--new-tab` / `--new-window` on the command line. |
 | **A window when you want one** | Hold **Ctrl+Shift** while a folder opens and the window stays a window; it is not folded back afterwards. |
@@ -65,10 +66,10 @@ The whole app is built around one decision table:
 | The user does this | Already open? | Result |
 |---|---|---|
 | Open a folder that would make a new window (desktop, Start, Win+E, another app, …) | no | new tab in the existing window |
-| Open a folder that would make a new window | yes | switch to the existing tab, no duplicate |
+| Open a folder that would make a new window | yes | switch to the existing tab (refreshed), no duplicate |
 | Double-click a folder *inside* Explorer | — | Explorer's own behaviour: navigates the current tab |
 | Ctrl+T, middle-click or "Open in new tab" inside Explorer | no | new tab, brought to the front; a special folder moves left |
-| Ctrl+T, middle-click or "Open in new tab" inside Explorer | yes | close the redundant new tab and switch to the existing tab |
+| Ctrl+T, middle-click or "Open in new tab" inside Explorer | yes | close the redundant new tab and switch to the existing tab (refreshed) |
 | Duplicate shortcut (`Alt+Shift+D`) | any | new tab with the same folder |
 | `--new-tab` / `--new-window` | any | always new tab / new window |
 | **Ctrl+Shift** held while the folder opens | any | plain Windows behaviour: a real, separate window |
