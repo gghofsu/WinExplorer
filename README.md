@@ -40,7 +40,8 @@ right-click   → Open in new window        →  a separate window, because you 
 | | |
 |---|---|
 | **Folders open as tabs** | Double-clicking a folder inside File Explorer adds a tab to the window you are working in instead of spawning a window. |
-| **No accidental duplicates** | Opening a folder that is already shown anywhere switches to the tab that shows it (and brings its window forward). |
+| **No accidental duplicates** | Opening a folder that is already shown anywhere switches to the tab that shows it (and brings its window forward). If that switch ever fails, the app still does not open a second tab for the same folder. |
+| **Tabs appear at the end** | A new folder is added after the last tab, not next to the current one (Explorer's own Ctrl+T inserts after the current tab, so the app makes the last tab current first). Duplicating a tab is the one exception, and stays next to its source. |
 | **Duplicates on demand** | Only an explicit request creates a second tab for the same folder: *Open in new tab*, *Open in new window* (right-click menu), the duplicate shortcut, or `--new-tab` / `--new-window` on the command line. |
 | **Middle-click** | Middle-clicking a folder opens it in a background tab, exactly like the built-in behaviour — but it also de-duplicates. |
 | **One window, many tabs** | While a File Explorer window is open, every folder becomes a tab in it — double-click, Start, the taskbar, Win+E, another app, and even windows that were already open. Only *Shift+double-click* or right-click → *Open in new window* creates a second window, and that window is never folded back. |

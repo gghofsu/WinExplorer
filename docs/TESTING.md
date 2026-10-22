@@ -28,6 +28,10 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
 
 - [ ] Double-click a folder in Explorer → a **new tab** appears in the same window and is
       focused; no new window flashes.
+- [ ] Open four folders from the desktop → the tabs appear **in the order opened**, each new
+      one added at the end of the strip.
+- [ ] Open a folder that is already open (desktop, Start, another app) → its tab is brought
+      to the front, **no second tab for it**, and no leftover window.
 - [ ] Double-click the **same** folder again → that tab is brought to the front, the tab
       count does not change.
 - [ ] Open folder `A` in window 1, then double-click `A` inside a *different* Explorer

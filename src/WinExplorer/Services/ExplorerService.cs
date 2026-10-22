@@ -84,16 +84,37 @@ internal sealed class ExplorerService : IDisposable
 
             if (!allowDuplicate)
             {
+                // Fresh locations: a stale entry would make us miss an already open folder and
+                // create a duplicate instead of switching to it.
+                ExplorerWindows.InvalidateCache();
+
                 var existing = await _tabs.RunOnQueryThreadAsync(() => ExplorerWindows.FindTab(
                     path, request.PreferredWindow, settings.DedupeAcrossAllWindows, request.ExcludeWindow))
                     .ConfigureAwait(false);
 
-                if (existing is not null &&
-                    await _tabs.SelectTabAsync(existing.WindowHwnd, existing.TabHwnd, request.Activate, cancellationToken)
-                        .ConfigureAwait(false))
+                if (existing is not null)
                 {
-                    // Clicking a folder that is already open must not create a duplicate.
+                    var switched = await _tabs
+                        .SelectTabAsync(existing.WindowHwnd, existing.TabHwnd, request.Activate, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (!switched)
+                    {
+                        // Second attempt: the tab may have been busy.
+                        await Task.Delay(120, cancellationToken).ConfigureAwait(false);
+                        switched = await _tabs
+                            .SelectTabAsync(existing.WindowHwnd, existing.TabHwnd, request.Activate, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+
+                    // The folder is open. Even if bringing its tab forward failed, opening a
+                    // second tab for it would be worse than leaving the user where they are.
                     _history.Forget(path);
+
+                    if (!switched)
+                        _log.Warn($"'{path}' is already open in tab 0x{existing.TabHwnd:X}, " +
+                                  "but the tab could not be brought to the front.");
+
                     _log.Info($"Switched to tab 0x{existing.TabHwnd:X} for '{path}'.");
                     return Report(new OpenResult(OpenOutcome.SwitchedToExistingTab, path,
                         existing.WindowHwnd, existing.TabHwnd), request);
@@ -108,7 +129,10 @@ internal sealed class ExplorerService : IDisposable
             }
 
             var activate = request.Activate && (settings.ActivateNewTab || request.Mode != OpenMode.ReuseExistingTab);
-            var tab = await _tabs.OpenTabAsync(targetWindow, path, activate, cancellationToken).ConfigureAwait(false);
+            // Duplicating a tab keeps it next to its source; everything else goes to the end.
+            var appendAtEnd = request.Origin != OpenOrigin.DuplicateTab;
+            var tab = await _tabs.OpenTabAsync(targetWindow, path, activate, appendAtEnd, cancellationToken)
+                .ConfigureAwait(false);
 
             if (tab is null)
             {
@@ -362,7 +386,9 @@ internal sealed class ExplorerService : IDisposable
                 Origin = OpenOrigin.WindowMerge,
                 PreferredWindow = target,
                 ExcludeWindow = newWindow,
-                Activate = false
+                // The window that just appeared was in front, so the user is looking at that
+                // folder: show them its tab instead of leaving them with nothing.
+                Activate = true
             }, cancellationToken).ConfigureAwait(false);
 
             if (!result.Succeeded)
@@ -655,6 +681,7 @@ internal sealed class ExplorerService : IDisposable
         foreach (var location in locations)
         {
             // Already open in the surviving window: nothing to add, just drop the duplicate.
+            ExplorerWindows.InvalidateCache();
             if (ExplorerWindows.FindTab(location, target, acrossAllWindows: false) is not null)
             {
                 SuppressNextClosure(location);

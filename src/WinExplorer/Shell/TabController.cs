@@ -102,7 +102,7 @@ internal sealed class TabController : IDisposable
     /// whether to fall back to a window).
     /// </summary>
     public async Task<ExplorerTab?> OpenTabAsync(nint windowHwnd, string location, bool activate,
-        CancellationToken cancellationToken = default)
+        bool appendAtEnd = true, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(location))
             return null;
@@ -119,11 +119,21 @@ internal sealed class TabController : IDisposable
 
             var tabsBefore = ExplorerWindows.GetTabs(windowHwnd);
 
-            // The tab the user is looking at: it gets the Ctrl+T command (Explorer opens the
-            // new tab next to it) and is put back in front when the new tab opens in the
-            // background.
+            // The tab the user is looking at: it is put back in front when the new tab opens
+            // in the background.
             var activeTab = ExplorerWindows.GetActiveTab(windowHwnd);
-            var commandTarget = activeTab != 0 ? activeTab : windowHwnd;
+
+            // Explorer inserts a new tab right after the current one. To make the folder land
+            // at the end of the strip, the last tab is made current first (Ctrl+<count>).
+            if (appendAtEnd && tabsBefore.Count > 1 && tabsBefore.Count <= 9)
+            {
+                await SelectLastTabAsync(windowHwnd, tabsBefore.Count, activeTab, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            var commandTarget = ExplorerWindows.GetActiveTab(windowHwnd);
+            if (commandTarget == 0)
+                commandTarget = windowHwnd;
 
             // Same command as Ctrl+T, posted to the active tab window.
             NativeMethods.PostMessage(commandTarget, NativeMethods.WM_COMMAND, NativeMethods.ExplorerCommandNewTab, 0);
@@ -295,6 +305,38 @@ internal sealed class TabController : IDisposable
     }
 
     /// <summary>
+    /// Selects the tab at the end of the strip (Ctrl+&lt;count&gt;), so the next Ctrl+T inserts
+    /// after it. Best effort: on failure the new tab simply appears next to the current one.
+    /// </summary>
+    private async Task SelectLastTabAsync(nint windowHwnd, int count, nint previousActive,
+        CancellationToken cancellationToken)
+    {
+        if (count < 2)
+            return;
+
+        try
+        {
+            NativeMethods.SendMessageTimeout(windowHwnd, NativeMethods.WM_COMMAND,
+                NativeMethods.ExplorerCommandSelectTab, (nint)count, NativeMethods.SMTO_ABORTIFHUNG, 800, out _);
+
+            // The strip updates in the shell's own thread; wait until the visible tab changed.
+            var deadline = Environment.TickCount64 + 400;
+            while (Environment.TickCount64 < deadline)
+            {
+                var active = ExplorerWindows.GetActiveTab(windowHwnd);
+                if (active != 0 && active != previousActive)
+                    return;
+
+                await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"Could not select the last tab: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Makes <paramref name="tabHwnd"/> the tab that is showing, and waits until Explorer
     /// agrees. Everything that navigates a tab depends on this.
     /// </summary>
@@ -405,6 +447,13 @@ internal sealed class TabController : IDisposable
             }
 
             var selected = ExplorerWindows.GetActiveTab(windowHwnd) == tabHwnd;
+            if (!selected)
+            {
+                // One more chance: the switch command is asynchronous in the shell's thread.
+                selected = await WaitForActiveTabAsync(windowHwnd, tabHwnd, 600, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             if (activateWindow)
                 WindowAnimator.Activate(windowHwnd);
 
