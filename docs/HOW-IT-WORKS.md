@@ -151,7 +151,9 @@ desktop.CompareIDs(0, pidl1, pidl2) == 0   →  same folder
 
 This is exactly how Explorer decides whether two paths are the same folder. Tabs that are
 currently being folded are never used as a dedupe target, and a matched tab is validated
-with `IsWindow` before it is selected.
+with `IsWindow` before it is selected. Whenever a request switches to an existing tab, that
+tab is **refreshed** (`IWebBrowser2.Refresh`, i.e. F5) on the way, so it never shows the
+folder as it looked when it was last visited.
 
 ### Tabs the user creates inside a window
 
@@ -159,13 +161,25 @@ with `IsWindow` before it is selected.
 middle-clicked folder, "Open in new tab". Those are not windows to fold, but they get these
 touches:
 
+- the folder is **settled first**: the tab registers while its first navigation is still
+  running (and the new tab page can show a transient folder on the way there), so the
+  watcher waits until the shell reports a folder that stops changing and no navigation is
+  in flight (`Busy`) before it decides anything — deciding duplicates against an empty or
+  transient folder is how the same folder ends up in two tabs;
 - if its folder is already shown in any tracked tab, the just-created duplicate is closed
-  and the existing tab (and its window) is selected;
+  and the existing tab (and its window) is selected **and refreshed**;
+- when the folder does not arrive in time, the duplicate check is **retried the moment the
+  tab's navigation completes** (within ~10 s), so a slow folder still switches instead of
+  duplicating;
 - otherwise the new tab is **brought to the front** (Explorer leaves middle-click tabs in
   the background), and a special folder is moved to its fixed place at the left (section 6).
 
 Tabs the engine creates itself are recognised by a short-lived set of engine-created tab
-handles and skipped here, because `OpenAsTabAsync` navigates and places them itself.
+handles and skipped here, because `OpenAsTabAsync` navigates and places them itself. A
+user-created tab is told from a new window by its frame: the window already has other
+tracked tabs, or its z-order already shows more than one tab. Both signals count — the new
+tab's own window can register before it shows up in the frame's z-order, and missing it
+there would turn a middle-click on an open folder into a permanent duplicate tab.
 
 ## 6. Keeping Home, This PC, Desktop, Downloads at the left
 

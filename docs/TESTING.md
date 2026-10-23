@@ -39,7 +39,7 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
 - [ ] Settings → *Keep Home, This PC, Desktop and Downloads at the left* off → folders are
       simply appended again.
 - [ ] Open a folder that is already open (desktop, Start, another app) → its tab is brought
-      to the front, **no second tab for it**, and no leftover window.
+      to the front **and refreshed (F5)**, **no second tab for it**, and no leftover window.
 - [ ] Watch the strip while folders open: it must not hop through other tabs, and the tab you
       are looking at must not change its folder. Only the new tab may appear.
 - [ ] Open the very first folder after starting WinExplorer with no window open → exactly one
@@ -74,10 +74,18 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
 ### New tabs and duplicates
 
 - [ ] Ctrl+T with Home not already open → a new Home tab is selected immediately.
-- [ ] Ctrl+T with Home already open → no duplicate remains; the existing Home tab is selected.
+- [ ] Ctrl+T with Home already open → no duplicate remains; the existing Home tab is
+      selected (and refreshed).
 - [ ] Middle-click a folder not already open → a new tab is selected immediately.
 - [ ] Middle-click or choose *Open in new tab* for a folder already open → no duplicate
-      remains; the existing folder tab is selected (including across Explorer windows).
+      remains; the existing folder tab is selected and refreshed (including across Explorer
+      windows).
+- [ ] Middle-click a folder that is already open **while the shell is busy** (several
+      middle-clicks in a row, or on a slow/network folder) → still no duplicate remains;
+      the existing tab is selected once the folder has loaded.
+- [ ] Change a folder on disk in another window, then open a folder that is already shown
+      in a tab → the switched-to tab **refreshes** and shows the change (it is never left
+      showing the listing from when it was last visited).
 - [ ] `Alt+Shift+D` in Explorer → duplicate tab, as an explicit duplicate request.
 - [ ] `WinExplorer.exe --open "C:\Temp" --new-tab` → duplicate tab, as an explicit request.
 - [ ] Right-click a folder → *Open in new window* → a separate window, even with window

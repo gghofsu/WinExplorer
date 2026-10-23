@@ -56,6 +56,13 @@ internal sealed class ExplorerWatcher : IDisposable
     /// does not treat them as user-created tabs). Pruned by age.</summary>
     private readonly Dictionary<nint, long> _engineCreatedTabs = new();
 
+    /// <summary>
+    /// User-created tabs whose folder had not arrived yet when they were created
+    /// (middle-click on a slow folder): their duplicate check is retried when the tab's
+    /// navigation completes. Pruned by age.
+    /// </summary>
+    private readonly Dictionary<nint, long> _pendingDedupeTabs = new();
+
     private readonly List<TabEntry> _entries = new();
     private readonly object _gate = new();
     private readonly SemaphoreSlim _openLock = new(1, 1);
@@ -79,6 +86,9 @@ internal sealed class ExplorerWatcher : IDisposable
 
     /// <summary>Keep hands off brand new windows for this long after start (session restore).</summary>
     private const int StartupGraceMs = 5000;
+
+    /// <summary>How long a user-created tab may wait for its folder before the duplicate check gives up.</summary>
+    private const int PendingDedupeTimeoutMs = 10000;
 
     public ExplorerWatcher(Logger log, SettingsStore settings, TabHistory history)
     {
@@ -404,11 +414,23 @@ internal sealed class ExplorerWatcher : IDisposable
     {
         try
         {
-            entry.Location = ReadLocation(entry.Browser);
-            entry.Name = ReadName(entry.Browser);
+            // Never clobber a known location with an empty read: the shell can report no
+            // folder for a moment between two navigations, and the duplicate detection
+            // runs on this value.
+            var current = ReadLocation(entry.Browser);
+            if (current.Length > 0)
+            {
+                entry.Location = current;
+                entry.Name = ReadName(entry.Browser);
+            }
 
             if (entry.TabHandle == 0)
                 entry.TabHandle = GetTabHandle(entry.Browser);
+
+            // A user-created tab whose folder had not arrived when it was created gets
+            // one more duplicate check now that its navigation has completed.
+            if (entry.TabHandle != 0 && IsPendingDedupe(entry.TabHandle))
+                _ = Task.Run(() => RecheckUserTabAsync(entry));
         }
         catch
         {
@@ -620,29 +642,46 @@ internal sealed class ExplorerWatcher : IDisposable
             if (Environment.TickCount64 - _startedAt < StartupGraceMs)
                 return;
 
-            // Without a location the window's content cannot be reproduced in a tab;
-            // folding it would lose whatever the user opened. Leave it alone.
-            if (location.Length == 0)
-                return;
-
-            // Control Panel is not a folder.
-            if (location.StartsWith(PathNormalizer.ControlPanel, StringComparison.OrdinalIgnoreCase))
-                return;
-
-            if (settings.IsExcluded(PathNormalizer.Normalize(location)))
-                return;
-
             var frameTabs = frame != 0 ? ExplorerWindows.GetTabs(frame) : new List<nint>();
 
             // A tab added to an *existing* window (Ctrl+T, middle-click, "open in new
             // tab") is not a window to fold: bring it to the front - Explorer opens it in
             // the background - and keep the special folders at the left of the strip.
-            if (frameTabs.Count > 1)
+            // The tab's own window can register before it shows up in the frame's
+            // z-order, so tracked siblings count as evidence too - missing a user-created
+            // tab here is what turns a middle-click on an open folder into a permanent
+            // duplicate tab.
+            int siblings;
+            lock (_gate)
             {
-                await HandleUserCreatedTabAsync(frame, entry, location, frameTabs.Count)
+                siblings = _entries.Count(e => e.FrameHandle == frame &&
+                                               !ReferenceEquals(e, entry) &&
+                                               e.TabHandle != 0 && NativeMethods.IsWindow(e.TabHandle));
+            }
+
+            var userTab = frameTabs.Count > 1 || siblings > 0;
+
+            // Control Panel is not a folder; excluded folders are left alone entirely.
+            if (location.Length > 0 &&
+                (location.StartsWith(PathNormalizer.ControlPanel, StringComparison.OrdinalIgnoreCase) ||
+                 settings.IsExcluded(PathNormalizer.Normalize(location))))
+            {
+                return;
+            }
+
+            if (userTab)
+            {
+                // The folder may still be loading (middle-click, "open in new tab");
+                // HandleUserCreatedTabAsync waits for it before deciding duplicates.
+                await HandleUserCreatedTabAsync(frame, entry, Math.Max(frameTabs.Count, siblings + 1))
                     .ConfigureAwait(false);
                 return;
             }
+
+            // Without a location the window's content cannot be reproduced in a tab;
+            // folding it would lose whatever the user opened. Leave it alone.
+            if (location.Length == 0)
+                return;
 
             if (!settings.SingleWindowMode)
                 return;
@@ -752,9 +791,12 @@ internal sealed class ExplorerWatcher : IDisposable
     /// A new tab appeared in an existing window: Ctrl+T, a middle-clicked folder, or
     /// "Open in new tab". Explorer leaves middle-click tabs in the background, so a unique
     /// tab is brought to the front. If its folder is already open, the redundant tab is
-    /// closed and the existing one is selected; special folders keep their fixed position.
+    /// closed and the existing one is selected (and refreshed); special folders keep their
+    /// fixed position. The folder is settled first - the tab registers while its first
+    /// navigation is still running - so the duplicate check never runs against an empty
+    /// or transient folder.
     /// </summary>
-    private async Task HandleUserCreatedTabAsync(nint frame, TabEntry entry, string location, int tabCount)
+    private async Task HandleUserCreatedTabAsync(nint frame, TabEntry entry, int tabCount)
     {
         // Tabs the engine creates itself are navigated and placed by OpenAsTabAsync.
         // User-created tabs wait on _openLock, so an engine tab created at the same time
@@ -762,31 +804,36 @@ internal sealed class ExplorerWatcher : IDisposable
         if (IsEngineCreatedTab(entry.TabHandle))
             return;
 
+        // The tab window can appear after its ShellWindows entry; without the handle the
+        // tab can neither be selected nor excluded from the duplicate search.
+        var tab = await WaitForTabHandleAsync(entry, 1500).ConfigureAwait(false);
+        if (tab == 0 || IsEngineCreatedTab(tab))
+            return;
+
+        // A middle-clicked folder is still on its way into the tab. Wait until the folder
+        // stops changing - deciding the duplicate question on an empty or transient folder
+        // is exactly how the same folder ends up in two tabs.
+        var (settled, folder) = await WaitForSettledLocationAsync(entry, 2500).ConfigureAwait(false);
+
         await _openLock.WaitAsync().ConfigureAwait(false);
         try
         {
             if (IsEngineCreatedTab(entry.TabHandle) || !NativeMethods.IsWindow(entry.TabHandle))
                 return;
 
-            // Read the shell's latest location: a tab can register while its first
-            // navigation is still completing, and duplicate detection must use its folder.
-            location = await _sta.RunWithTimeoutAsync(() =>
+            if (settled && folder.Length > 0)
             {
-                var current = ReadLocation(entry.Browser);
-                if (current.Length == 0)
-                    return entry.Location;
+                ClearPendingDedupe(entry.TabHandle);
 
-                entry.Location = current;
-                entry.Name = ReadName(entry.Browser);
-                return current;
-            }, entry.Location, 1500).ConfigureAwait(false);
-            location = PathNormalizer.Normalize(location);
+                // Control Panel is not a folder; excluded folders are left alone entirely.
+                if (folder.StartsWith(PathNormalizer.ControlPanel, StringComparison.OrdinalIgnoreCase) ||
+                    Settings.IsExcluded(folder))
+                    return;
 
-            // Explorer creates the tab before we learn where it is going. If that folder
-            // already has a tab, close this just-created duplicate and select the original.
-            if (location.Length > 0)
-            {
-                var existing = await FindExistingTabAsync(location, excludeTab: entry.TabHandle)
+                // Explorer creates the tab before we learn where it is going. If that
+                // folder already has a tab, close this just-created duplicate and select
+                // the original.
+                var existing = await FindExistingTabAsync(folder, excludeTab: entry.TabHandle)
                     .ConfigureAwait(false);
                 if (existing is not null)
                 {
@@ -798,17 +845,27 @@ internal sealed class ExplorerWatcher : IDisposable
                         NativeMethods.ExplorerCommandCloseTab, 0);
                     await SelectTabByHandleAsync(existing.Value.Frame, existing.Value.Tab)
                         .ConfigureAwait(false);
+                    await RefreshTabAsync(existing.Value.Tab).ConfigureAwait(false);
                     WindowAnimator.Activate(existing.Value.Frame);
-                    _history.Forget(location);
-                    _log.Info($"Closed a duplicate user-created tab for '{location}' and switched to the existing tab.");
+                    _history.Forget(folder);
+                    _log.Info($"Closed a duplicate user-created tab for '{folder}' and switched to the existing tab.");
                     return;
                 }
+            }
+            else
+            {
+                // The folder never showed up in time; the duplicate check runs again when
+                // the tab's navigation completes (see OnEntryNavigated).
+                RememberPendingDedupe(entry.TabHandle);
             }
 
             await SelectNewTabAsync(frame, entry.TabHandle).ConfigureAwait(false);
 
+            // Placement at the left needs the folder; with an unsettled folder there is
+            // nothing to place yet.
             var settings = Settings;
-            if (!settings.KeepSpecialFoldersFirst || SpecialFolders.Rank(location) is not int rank)
+            if (!settled || !settings.KeepSpecialFoldersFirst ||
+                SpecialFolders.Rank(folder) is not int rank)
                 return;
 
             if (FrameHasSpecialOfRank(frame, rank, excludeTab: entry.TabHandle))
@@ -817,12 +874,70 @@ internal sealed class ExplorerWatcher : IDisposable
             // The new tab sits at the end of the strip and already shows the folder, so
             // the same rotation as for engine-created tabs applies; when the folder
             // already belongs at the end (false), there is nothing to do.
-            await TryPlaceSpecialFolderAsync(frame, tabCount - 1, entry, location, rank)
+            await TryPlaceSpecialFolderAsync(frame, tabCount - 1, entry, folder, rank)
                 .ConfigureAwait(false);
         }
         finally
         {
             _openLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// One more duplicate check for a user-created tab whose folder was unknown when the
+    /// tab appeared: the navigation it was waiting for has now completed. If the folder is
+    /// already open the late tab is closed and the existing tab selected and refreshed -
+    /// the same treatment a fast tab gets in <see cref="HandleUserCreatedTabAsync"/>.
+    /// </summary>
+    private async Task RecheckUserTabAsync(TabEntry entry)
+    {
+        try
+        {
+            await _openLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var tab = entry.TabHandle;
+                if (tab == 0 || !IsPendingDedupe(tab))
+                    return;
+                ClearPendingDedupe(tab);
+
+                if (IsEngineCreatedTab(tab) || entry.Folding || !NativeMethods.IsWindow(tab))
+                    return;
+
+                var (settled, folder) = await WaitForSettledLocationAsync(entry, 1500)
+                    .ConfigureAwait(false);
+                if (!settled || folder.Length == 0)
+                {
+                    // Still moving (chained navigations): try again on the next one,
+                    // within the pending window.
+                    RememberPendingDedupe(tab);
+                    return;
+                }
+
+                var existing = await FindExistingTabAsync(folder, excludeTab: tab).ConfigureAwait(false);
+                if (existing is null)
+                    return;
+
+                var frame = entry.FrameHandle != 0 ? entry.FrameHandle : NativeMethods.GetParent(tab);
+                await SelectTabByHandleAsync(frame, tab).ConfigureAwait(false);
+                entry.Folding = true;
+                NativeMethods.SendMessage(tab, NativeMethods.WM_COMMAND,
+                    NativeMethods.ExplorerCommandCloseTab, 0);
+                await SelectTabByHandleAsync(existing.Value.Frame, existing.Value.Tab)
+                    .ConfigureAwait(false);
+                await RefreshTabAsync(existing.Value.Tab).ConfigureAwait(false);
+                WindowAnimator.Activate(existing.Value.Frame);
+                _history.Forget(folder);
+                _log.Info($"Closed a duplicate user-created tab for '{folder}' (folder arrived late) and switched to the existing tab.");
+            }
+            finally
+            {
+                _openLock.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"Late duplicate check failed: {ex.Message}");
         }
     }
 
@@ -862,6 +977,52 @@ internal sealed class ExplorerWatcher : IDisposable
         }
     }
 
+    // ------------------------------------------------------------------
+    // User-created tabs whose folder arrives late
+    // ------------------------------------------------------------------
+
+    private void RememberPendingDedupe(nint tabHandle)
+    {
+        var now = Environment.TickCount64;
+        lock (_gate)
+        {
+            foreach (var old in _pendingDedupeTabs
+                         .Where(p => now - p.Value > PendingDedupeTimeoutMs)
+                         .Select(p => p.Key).ToList())
+            {
+                _pendingDedupeTabs.Remove(old);
+            }
+
+            // Keep the original timestamp: the window is measured from creation, not
+            // from the last retry.
+            if (!_pendingDedupeTabs.ContainsKey(tabHandle))
+                _pendingDedupeTabs[tabHandle] = now;
+        }
+    }
+
+    private bool IsPendingDedupe(nint tabHandle)
+    {
+        lock (_gate)
+        {
+            if (!_pendingDedupeTabs.TryGetValue(tabHandle, out var since))
+                return false;
+
+            if (Environment.TickCount64 - since > PendingDedupeTimeoutMs)
+            {
+                _pendingDedupeTabs.Remove(tabHandle);
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    private void ClearPendingDedupe(nint tabHandle)
+    {
+        lock (_gate)
+            _pendingDedupeTabs.Remove(tabHandle);
+    }
+
     private bool FrameHasSpecialOfRank(nint frame, int rank, nint excludeTab)
     {
         lock (_gate)
@@ -869,6 +1030,105 @@ internal sealed class ExplorerWatcher : IDisposable
             return _entries.Any(e => e.FrameHandle == frame &&
                                      e.TabHandle != excludeTab &&
                                      SpecialFolders.Rank(e.Location) == rank);
+        }
+    }
+
+    /// <summary>
+    /// The tab's <c>ShellTabWindowClass</c> handle, waiting for the shell to create the
+    /// window (it can register with <c>ShellWindows</c> first). 0 when it never appears.
+    /// </summary>
+    private async Task<nint> WaitForTabHandleAsync(TabEntry entry, int timeoutMs)
+    {
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (true)
+        {
+            if (entry.TabHandle != 0)
+            {
+                if (NativeMethods.IsWindow(entry.TabHandle))
+                    return entry.TabHandle;
+                return 0;
+            }
+
+            await _sta.RunWithTimeoutAsync<bool>(() =>
+            {
+                try { entry.TabHandle = GetTabHandle(entry.Browser); }
+                catch { /* mid-creation */ }
+                return true;
+            }, false, 1500).ConfigureAwait(false);
+
+            if (entry.TabHandle != 0)
+                return NativeMethods.IsWindow(entry.TabHandle) ? entry.TabHandle : 0;
+
+            if (Environment.TickCount64 >= deadline)
+                return 0;
+
+            await Task.Delay(50).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Waits until the tab's folder is known and stays put. A user-created tab registers
+    /// before its first navigation is done (middle-click, "Open in new tab"), and a new
+    /// tab page can show a transient folder on the way there; deciding the duplicate
+    /// question against an empty or transient folder is exactly how the same folder ends
+    /// up in two tabs. <c>Busy</c> keeps the wait going while a navigation is in flight
+    /// and the quiet window covers the gap between two navigations.
+    /// </summary>
+    private async Task<(bool Settled, string Location)> WaitForSettledLocationAsync(TabEntry entry,
+        int timeoutMs)
+    {
+        const int pollMs = 100;
+        const int quietMs = 300;
+
+        var deadline = Environment.TickCount64 + timeoutMs;
+        var last = string.Empty;
+        var stableSince = Environment.TickCount64;
+
+        while (true)
+        {
+            var (current, busy) = await _sta.RunWithTimeoutAsync(() =>
+            {
+                string location;
+                bool isBusy;
+                try { location = ReadLocation(entry.Browser); }
+                catch { location = string.Empty; }
+
+                // Unknown counts as "still navigating": a guess must not settle the tab.
+                try { isBusy = entry.Browser.Busy; }
+                catch { isBusy = true; }
+
+                if (location.Length > 0)
+                {
+                    entry.Location = location;
+                    entry.Name = ReadName(entry.Browser);
+                }
+
+                return (location, isBusy);
+            }, (string.Empty, true), 1500).ConfigureAwait(false);
+
+            var location = current.Length > 0 ? current : entry.Location;
+
+            if (location.Length > 0 && !busy &&
+                string.Equals(location, last, StringComparison.OrdinalIgnoreCase))
+            {
+                if (Environment.TickCount64 - stableSince >= quietMs)
+                    return (true, PathNormalizer.Normalize(location));
+            }
+            else
+            {
+                last = location;
+                stableSince = Environment.TickCount64;
+            }
+
+            // A candidate that is quietly accumulating its quiet window gets that window
+            // even when the deadline passes; only a still-empty or still-changing tab
+            // gives up on time.
+            var settling = location.Length > 0 && !busy &&
+                           string.Equals(location, last, StringComparison.OrdinalIgnoreCase);
+            if (Environment.TickCount64 >= deadline && !settling)
+                return (false, PathNormalizer.Normalize(location));
+
+            await Task.Delay(pollMs).ConfigureAwait(false);
         }
     }
 
@@ -901,11 +1161,12 @@ internal sealed class ExplorerWatcher : IDisposable
                 if (existing is not null)
                 {
                     await SelectTabByHandleAsync(existing.Value.Frame, existing.Value.Tab).ConfigureAwait(false);
+                    await RefreshTabAsync(existing.Value.Tab).ConfigureAwait(false);
                     if (activate)
                         WindowAnimator.Activate(existing.Value.Frame);
 
                     _history.Forget(path);
-                    _log.Info($"Switched to the tab that already shows '{path}'.");
+                    _log.Info($"Switched to the tab that already shows '{path}' (refreshed).");
                     return new OpenResult(OpenOutcome.SwitchedToExistingTab, path,
                         existing.Value.Frame, existing.Value.Tab);
                 }
@@ -1105,6 +1366,24 @@ internal sealed class ExplorerWatcher : IDisposable
     // ------------------------------------------------------------------
     // Dedupe / tab selection
     // ------------------------------------------------------------------
+
+    /// <summary>
+    /// F5 on one tab: the folder view re-reads its content. Every switch to an already
+    /// open tab refreshes it, so it never shows the state from when it was last visited.
+    /// </summary>
+    private async Task RefreshTabAsync(nint tab)
+    {
+        var entry = FindEntryByTab(tab);
+        if (entry is null)
+            return;
+
+        await _sta.RunWithTimeoutAsync<bool>(() =>
+        {
+            try { entry.Browser.Refresh(); }
+            catch { /* the tab may be closing */ }
+            return true;
+        }, false, 2000).ConfigureAwait(false);
+    }
 
     /// <summary>The tab that already shows <paramref name="path"/>, or null.</summary>
     private async Task<(nint Frame, nint Tab)?> FindExistingTabAsync(string path, nint excludeFrame = 0,
