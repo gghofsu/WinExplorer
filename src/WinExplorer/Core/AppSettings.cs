@@ -24,10 +24,10 @@ public sealed class AppSettings
     public AlreadyOpenBehavior WhenAlreadyOpen { get; set; } = AlreadyOpenBehavior.SwitchToExistingTab;
 
     /// <summary>
-    /// Keep exactly one File Explorer window. Every new window Explorer creates - the
-    /// desktop, Start, the taskbar, Win+E, another app - is reopened as a tab of the window
-    /// that is already there, unless the user explicitly asked for a window
-    /// (Ctrl+Shift while it opens).
+    /// Keep one File Explorer window per virtual desktop. Every new window Explorer
+    /// creates - the desktop, Start, the taskbar, Win+E, another app - is reopened as a tab
+    /// of the window on the same virtual desktop, unless the user explicitly asked for a
+    /// window (Ctrl+Shift while it opens).
     /// </summary>
     public bool SingleWindowMode { get; set; } = true;
 

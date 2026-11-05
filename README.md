@@ -1,14 +1,16 @@
 # WinExplorer
 
-**Every folder opens as a tab in the File Explorer window you already have — and opening a
-folder that is already open just switches to its tab instead of creating a duplicate.**
+**Every folder opens as a tab in the File Explorer window on its virtual desktop — and
+opening a folder that is already open on that desktop switches to its tab and refreshes it
+instead of creating a duplicate.**
 
 WinExplorer is a small Windows 11 tray app built on the mechanism of
 [w4po/ExplorerTabUtility](https://github.com/w4po/ExplorerTabUtility): whenever Windows is
 about to show a **new File Explorer window** — from the desktop, Start, the taskbar, Win+E,
 a file dialog, another app — that window is caught before it is painted and its folder is
 reopened as a **tab** of the window that is already there. One window, many folders, no
-accidental copies of the same folder in three different tabs.
+accidental copies of the same folder in three different tabs. Each Windows virtual desktop
+(Win+Tab) keeps its own Explorer window and tabs; folders never get sent to another desktop.
 
 ```
 open D:\Projects\Website from the desktop  →  a tab in the Explorer window you already have
@@ -47,12 +49,13 @@ navigates the current tab (Ctrl+double-click opens Explorer's own new tab, as al
 | **New windows become tabs** | Any folder that would open a new Explorer window — the desktop, Start, the taskbar, Win+E, a file dialog, another app, the context menu, the command line — lands as a tab in the window you already have. |
 | **No accidental duplicates** | Opening a folder that is already shown in a tab switches to that tab — refreshed, and with its window brought forward — instead of creating a second copy. |
 | **Invisible merge** | The surplus window is cloaked by DWM before it is ever painted (from a hook thread that does nothing else), so folding a window into a tab happens without anything flashing on screen. |
-| **Switches are fresh** | Every switch to an already open tab refreshes it (F5) on the way, so the tab never shows the folder as it looked when it was last visited. |
+| **Switches are fresh** | Reopening an existing folder restores/activates its window, selects its tab, waits for navigation to settle, then refreshes the actual folder view (like F5). This also refreshes a tab that was already selected. |
+| **Separate virtual desktops** | Each Windows virtual desktop has its own main Explorer window and duplicate detection. The first folder on Desktop 2 opens a window there, even if the same folder is open on Desktop 1; subsequent folders merge only within their own desktop. |
 | **New tabs come to the front** | A tab opened inside Explorer with Ctrl+T, a middle-click or "Open in new tab" is selected immediately; if its folder is already open — even when the folder only finishes loading afterwards — the duplicate tab closes and the existing tab is selected and refreshed. |
 | **Home / This PC / Desktop / Downloads first** | These four folders are always placed at the left of the tab strip, in that order (Home, This PC, Desktop, Downloads), in front of every other tab — the way Explorer's own windows start at Home. This also applies when one of them is opened as a new tab inside the current window. |
 | **Duplicates on demand** | Only an explicit request creates a second tab for the same folder: the duplicate shortcut, or `--new-tab` / `--new-window` on the command line. |
 | **A window when you want one** | Hold **Ctrl+Shift** while a folder opens and the window stays a window; it is not folded back afterwards. |
-| **Collect windows into one** | The tray menu (and `--single-window`) folds every open Explorer window into one tabbed window on demand. |
+| **Collect windows into one** | The tray menu (and `--single-window`) folds the current virtual desktop's Explorer windows into one tabbed window on demand. Other desktops are left alone. |
 | **Duplicate / reopen shortcuts** | Global shortcuts to duplicate the current tab and to reopen the last closed folder, browser style. |
 | **Win+E as a tab** *(optional)* | Turn Win+E into "open This PC (or Home) as a tab". |
 | **One-click install and uninstall** | Double-click `Install.cmd` to install, `Uninstall.cmd` (or the entry Windows itself lists in *Settings → Apps*) to remove it. Startup is one checkbox — or one tray-menu click — either way. |
@@ -75,8 +78,13 @@ The whole app is built around one decision table:
 | **Ctrl+Shift** held while the folder opens | any | plain Windows behaviour: a real, separate window |
 | Drag a tab out of a window | — | the dragged-out window stays a window |
 
-"Already open" is decided from the locations the shell reports for every tab in every
-File Explorer window. String comparison is the fast path; paths that differ textually
+These rules apply **separately on each virtual desktop**. With no Explorer window on the
+current desktop, a folder opens a new window there; the next folders become its tabs. The
+same folder can be open once on Desktop 1 and once on Desktop 2 without either stealing the
+other desktop's window. Moving a window in Task View changes which desktop can reuse it.
+
+"Already open" is decided from the locations the shell reports for tabs in File Explorer
+windows **on the request's desktop only**. String comparison is the fast path; paths that differ textually
 (`C:\PROGRA~1`, junctions, redirected folders, `shell:::{GUID}` items) are compared through
 shell item IDs (PIDLs), which is how Windows itself decides whether two folders are the same.
 
@@ -247,7 +255,8 @@ The startup entry can be added or removed at any time, without reinstalling:
 
 - **Start it once** (or let it start with Windows). It lives in the notification area.
 - **Open folders** as usual — from the desktop, Start, the taskbar, Win+E, anywhere. Each
-  one appears as a tab in the Explorer window you already have (or switches to its tab).
+  one appears as a tab in the Explorer window on that virtual desktop (or switches to and
+  refreshes its existing tab). The first folder on an empty desktop opens a new window.
 - **Hold Ctrl+Shift** while a folder opens to get a separate window.
 - **Right-click a folder** → *Open in WinExplorer tab* to send it to the tabbed window
   explicitly (useful while the single-window switch is off).
@@ -266,7 +275,7 @@ there is no Save button.
 
 | Setting | Meaning |
 |---|---|
-| **Keep a single File Explorer window** | The main switch: every new Explorer window is reopened as a tab of the window you already have. Hold Ctrl+Shift while a folder opens to get a real window. |
+| **Keep a single File Explorer window per virtual desktop** | The main switch: every new Explorer window is reopened as a tab of the window on the same virtual desktop. Hold Ctrl+Shift while a folder opens to get a real window. |
 | **When the folder is already open** | *Switch to the tab that already shows it* (default) or *Open another tab anyway*. |
 | **Keep Home, This PC, Desktop and Downloads at the left** | The fixed order described above. |
 | **Use Win+E to open a tab** | Replaces the Win+E shortcut. |
@@ -296,7 +305,7 @@ WinExplorer.exe --settings               Show the window of the running instance
 WinExplorer.exe --install-context-menu   Add the right-click entries (per user)
 WinExplorer.exe --uninstall-context-menu Remove them and restore the old handler
 WinExplorer.exe --install-startup | --uninstall-startup | --toggle-startup
-WinExplorer.exe --single-window         Fold every Explorer window into one tabbed window
+WinExplorer.exe --single-window         Collect this virtual desktop's Explorer windows into tabs
 WinExplorer.exe --restart                Restart the helper (recovers a hung copy)
 WinExplorer.exe --diagnose               Write a diagnostics report and open it
 WinExplorer.exe --probe                  List every window, tab and folder the app can see
@@ -333,11 +342,11 @@ All three can be changed in the **Shortcuts** tab.
   and the header of the settings window), the folder is on the exclusion list, Ctrl+Shift
   was held, or the location is not a folder at all (Control Panel, search results, an
   archive, a phone). There was also no other Explorer window to fold into — the very first
-  window always stays a window.
+  window on each virtual desktop always stays a window.
 - **Two windows remain and never merge** — the second one was opened with Ctrl+Shift or by
   dragging a tab out, so it is deliberate; WinExplorer folds *new* windows, not ones you
   made on purpose. Tray menu → **Collect windows into one** (or `--single-window`) merges
-  everything on demand.
+  the current desktop's windows on demand, without touching windows on other desktops.
 - **A window flashes before it becomes a tab** — Windows painted it before the hook could
   hide it (heavy load, or the window appeared during the first seconds after startup, when
   WinExplorer deliberately keeps its hands off restored session windows).

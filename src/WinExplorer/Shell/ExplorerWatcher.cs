@@ -9,8 +9,8 @@ namespace WinExplorer.Shell;
 /// The engine. A port of w4po/ExplorerTabUtility's <c>ExplorerWatcher</c>: File Explorer
 /// tabs are tracked through the shell's <c>ShellWindows</c> collection and its
 /// <c>WindowRegistered</c> event, new windows are hidden and reopened as tabs of the one
-/// main window, and a folder that is already open anywhere gets its existing tab selected
-/// instead of a duplicate.
+/// main window on the same virtual desktop, and a folder that is already open on that
+/// desktop gets its existing tab selected and refreshed instead of a duplicate.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -28,14 +28,14 @@ namespace WinExplorer.Shell;
 /// </remarks>
 internal sealed class ExplorerWatcher : IDisposable
 {
-    private static readonly Guid SID_STopLevelBrowser = new("4C96BE40-915C-11CF-99D3-00AA004AE837");
-
     /// <summary>One tracked Explorer tab.</summary>
     private sealed class TabEntry
     {
         public required IWebBrowser2 Browser;
         public nint TabHandle;
         public nint FrameHandle;
+        // Last known desktop is only for closed-tab history. Routing always queries live.
+        public Guid? DesktopId;
         public long CreatedAt = Environment.TickCount64;
         public string Location = string.Empty;
         public string Name = string.Empty;
@@ -71,6 +71,9 @@ internal sealed class ExplorerWatcher : IDisposable
     private ShellWindowsEventsSink? _shellWindowsSink;
     private ComEventSubscription? _shellWindowsEvents;
     private ShellPathComparer? _comparer;
+    private VirtualDesktopManager? _desktops;
+    private VirtualDesktopManager? _hookDesktops;
+    private readonly ExplorerWindowRouter _windowRouter = new();
 
     private NativeMethods.WinEventProc? _windowCallback;
     private nint _windowHook;
@@ -79,7 +82,6 @@ internal sealed class ExplorerWatcher : IDisposable
     private System.Threading.Timer? _healthTimer;
     private int _healthRunning;
 
-    private nint _mainWindow;
     private long _startedAt;
     private bool _started;
     private bool _disposed;
@@ -163,6 +165,7 @@ internal sealed class ExplorerWatcher : IDisposable
     private void InitializeShellObjects()
     {
         _comparer = new ShellPathComparer();
+        _desktops = new VirtualDesktopManager();
 
         _shellWindows = new ShellWindowsClass();
 
@@ -194,6 +197,7 @@ internal sealed class ExplorerWatcher : IDisposable
         if (_windowHook != 0)
             return;
 
+        _hookDesktops = new VirtualDesktopManager();
         _windowCallback = OnExplorerWindowCreatedOrShown;
         _windowHook = NativeMethods.SetWinEventHook(
             NativeMethods.EVENT_OBJECT_CREATE, NativeMethods.EVENT_OBJECT_SHOW,
@@ -210,6 +214,8 @@ internal sealed class ExplorerWatcher : IDisposable
             _windowHook = 0;
         }
         _windowCallback = null;
+        _hookDesktops?.Dispose();
+        _hookDesktops = null;
     }
 
     /// <summary>Releases the shell objects. Runs on the STA thread.</summary>
@@ -238,6 +244,9 @@ internal sealed class ExplorerWatcher : IDisposable
 
         _comparer?.Dispose();
         _comparer = null;
+        _desktops?.Dispose();
+        _desktops = null;
+        _windowRouter.Clear();
     }
 
     // ------------------------------------------------------------------
@@ -289,6 +298,7 @@ internal sealed class ExplorerWatcher : IDisposable
         try
         {
             entry.FrameHandle = (nint)browser.HWND;
+            entry.DesktopId = _desktops?.GetWindowDesktopId(entry.FrameHandle);
             entry.TabHandle = GetTabHandle(browser);
             entry.Location = ReadLocation(browser);
             entry.Name = ReadName(browser);
@@ -316,9 +326,6 @@ internal sealed class ExplorerWatcher : IDisposable
             }
 
             _entries.Add(entry);
-
-            if (_entries.Count == 1 && entry.FrameHandle != 0)
-                _mainWindow = entry.FrameHandle;
         }
 
         return entry;
@@ -332,7 +339,7 @@ internal sealed class ExplorerWatcher : IDisposable
             if (browser is not IServiceProviderNative provider)
                 return 0;
 
-            var service = SID_STopLevelBrowser;
+            var service = ShellViewRefresher.TopLevelBrowserService;
             var iid = typeof(Interop.IShellBrowser).GUID;
             if (provider.QueryService(ref service, ref iid, out var shellBrowser) != 0 || shellBrowser is null)
                 return 0;
@@ -426,6 +433,7 @@ internal sealed class ExplorerWatcher : IDisposable
 
             if (entry.TabHandle == 0)
                 entry.TabHandle = GetTabHandle(entry.Browser);
+            entry.DesktopId = _desktops?.GetWindowDesktopId(entry.FrameHandle) ?? entry.DesktopId;
 
             // A user-created tab whose folder had not arrived when it was created gets
             // one more duplicate check now that its navigation has completed.
@@ -445,7 +453,8 @@ internal sealed class ExplorerWatcher : IDisposable
             _entries.Remove(entry);
 
         if (!entry.Folding && entry.Location.Length > 0)
-            _history.RecordClosed(entry.Location);
+            _history.RecordClosed(entry.Location,
+                desktopId: _desktops?.GetWindowDesktopId(entry.FrameHandle) ?? entry.DesktopId);
 
         ReleaseEntry(entry);
     }
@@ -496,8 +505,8 @@ internal sealed class ExplorerWatcher : IDisposable
             lock (_gate)
                 _entries.Remove(entry);
 
-            if (entry.Location.Length > 0)
-                _history.RecordClosed(entry.Location);
+            if (!entry.Folding && entry.Location.Length > 0)
+                _history.RecordClosed(entry.Location, desktopId: entry.DesktopId);
 
             ReleaseEntry(entry);
         }
@@ -535,16 +544,19 @@ internal sealed class ExplorerWatcher : IDisposable
                 return;
 
             // A window we already track is not a new window (it is being shown again).
-            int entryCount;
+            List<nint> otherFrames;
             lock (_gate)
             {
                 if (_entries.Any(e => e.FrameHandle == hwnd))
                     return;
-                entryCount = _entries.Count;
+                otherFrames = _entries.Where(e => !e.Folding)
+                    .Select(e => e.FrameHandle).Distinct().ToList();
             }
 
-            // Nothing to fold it into → it stays a window, don't touch it.
-            if (entryCount == 0)
+            // The first window on EACH desktop stays visible. Never cloak a window
+            // just because another desktop happens to have Explorer open already.
+            var desktop = new ExplorerDesktopScope(_hookDesktops?.GetWindowDesktopId(hwnd));
+            if (_hookDesktops is null || !otherFrames.Any(w => _hookDesktops.IsInScope(w, desktop)))
                 return;
 
             if (WindowAnimator.Hide(hwnd))
@@ -686,18 +698,16 @@ internal sealed class ExplorerWatcher : IDisposable
             if (!settings.SingleWindowMode)
                 return;
 
-            // Only fold a *window* (its first tab), and only when there is another
-            // window with tabs to fold it into.
-            int otherTabs;
-            lock (_gate)
-                otherTabs = _entries.Count(e => e.FrameHandle != frame);
-
-            if (otherTabs == 0 || frameTabs.Count != 1 || frame == _mainWindow)
+            // Choose a separate main window per desktop, including this frame in the
+            // choice so the first window on a new desktop becomes its main window.
+            var desktop = await CaptureDesktopScopeAsync(frame).ConfigureAwait(false);
+            var mainWindow = await GetMainWindowAsync(desktop).ConfigureAwait(false);
+            if (mainWindow == 0 || mainWindow == frame || frameTabs.Count != 1)
                 return;
 
             // A tab the user just dragged out of a window is a deliberate window too:
             // its folder shows up in the history as "closed" a moment ago.
-            if (_history.WasClosedRecently(location, 2000))
+            if (_history.WasClosedRecently(location, 2000, desktop.Id))
                 return;
 
             // From here on the window is ours: keep it invisible and move its folder over.
@@ -709,10 +719,12 @@ internal sealed class ExplorerWatcher : IDisposable
 
             entry.Folding = true;
 
-            var result = await OpenAsTabAsync(location, activate: true, allowDuplicate: false,
-                excludeFrame: frame).ConfigureAwait(false);
+            var result = await OpenAsTabInScopeAsync(location, desktop, activate: true,
+                allowDuplicate: false, excludeFrame: frame, preferredWindow: mainWindow).ConfigureAwait(false);
 
-            if (result.Succeeded && result.Outcome != OpenOutcome.OpenedNewWindow)
+            if (result.Succeeded && result.Outcome != OpenOutcome.OpenedNewWindow &&
+                await IsWindowInScopeAsync(frame, desktop).ConfigureAwait(false) &&
+                await IsWindowInScopeAsync(result.Window, desktop).ConfigureAwait(false))
             {
                 keepHidden = true;
 
@@ -814,11 +826,13 @@ internal sealed class ExplorerWatcher : IDisposable
         // stops changing - deciding the duplicate question on an empty or transient folder
         // is exactly how the same folder ends up in two tabs.
         var (settled, folder) = await WaitForSettledLocationAsync(entry, 2500).ConfigureAwait(false);
+        var desktop = await CaptureDesktopScopeAsync(frame).ConfigureAwait(false);
 
         await _openLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (IsEngineCreatedTab(entry.TabHandle) || !NativeMethods.IsWindow(entry.TabHandle))
+            if (IsEngineCreatedTab(entry.TabHandle) || !NativeMethods.IsWindow(entry.TabHandle) ||
+                !await IsWindowInScopeAsync(frame, desktop).ConfigureAwait(false))
                 return;
 
             if (settled && folder.Length > 0)
@@ -833,21 +847,21 @@ internal sealed class ExplorerWatcher : IDisposable
                 // Explorer creates the tab before we learn where it is going. If that
                 // folder already has a tab, close this just-created duplicate and select
                 // the original.
-                var existing = await FindExistingTabAsync(folder, excludeTab: entry.TabHandle)
+                var existing = await FindExistingTabAsync(folder, desktop, excludeTab: entry.TabHandle)
                     .ConfigureAwait(false);
                 if (existing is not null)
                 {
                     // Make the just-created tab active first so Ctrl+W is routed to this
                     // duplicate, even when Explorer initially opened it in the background.
-                    await SelectNewTabAsync(frame, entry.TabHandle).ConfigureAwait(false);
+                    if (!await IsWindowInScopeAsync(existing.Value.Frame, desktop).ConfigureAwait(false) ||
+                        !await SelectNewTabAsync(frame, entry.TabHandle).ConfigureAwait(false))
+                        return;
                     entry.Folding = true;
                     NativeMethods.SendMessage(entry.TabHandle, NativeMethods.WM_COMMAND,
                         NativeMethods.ExplorerCommandCloseTab, 0);
-                    await SelectTabByHandleAsync(existing.Value.Frame, existing.Value.Tab)
+                    await SwitchToExistingTabAsync(existing.Value.Frame, existing.Value.Tab, desktop)
                         .ConfigureAwait(false);
-                    await RefreshTabAsync(existing.Value.Tab).ConfigureAwait(false);
-                    WindowAnimator.Activate(existing.Value.Frame);
-                    _history.Forget(folder);
+                    _history.Forget(folder, desktop.Id);
                     _log.Info($"Closed a duplicate user-created tab for '{folder}' and switched to the existing tab.");
                     return;
                 }
@@ -914,20 +928,21 @@ internal sealed class ExplorerWatcher : IDisposable
                     return;
                 }
 
-                var existing = await FindExistingTabAsync(folder, excludeTab: tab).ConfigureAwait(false);
+                var desktop = await CaptureDesktopScopeAsync(entry.FrameHandle).ConfigureAwait(false);
+                var existing = await FindExistingTabAsync(folder, desktop, excludeTab: tab).ConfigureAwait(false);
                 if (existing is null)
                     return;
 
                 var frame = entry.FrameHandle != 0 ? entry.FrameHandle : NativeMethods.GetParent(tab);
-                await SelectTabByHandleAsync(frame, tab).ConfigureAwait(false);
+                if (!await IsWindowInScopeAsync(existing.Value.Frame, desktop).ConfigureAwait(false) ||
+                    !await SelectTabByHandleAsync(frame, tab).ConfigureAwait(false))
+                    return;
                 entry.Folding = true;
                 NativeMethods.SendMessage(tab, NativeMethods.WM_COMMAND,
                     NativeMethods.ExplorerCommandCloseTab, 0);
-                await SelectTabByHandleAsync(existing.Value.Frame, existing.Value.Tab)
+                await SwitchToExistingTabAsync(existing.Value.Frame, existing.Value.Tab, desktop)
                     .ConfigureAwait(false);
-                await RefreshTabAsync(existing.Value.Tab).ConfigureAwait(false);
-                WindowAnimator.Activate(existing.Value.Frame);
-                _history.Forget(folder);
+                _history.Forget(folder, desktop.Id);
                 _log.Info($"Closed a duplicate user-created tab for '{folder}' (folder arrived late) and switched to the existing tab.");
             }
             finally
@@ -945,18 +960,20 @@ internal sealed class ExplorerWatcher : IDisposable
     /// Selects a tab that was just appended at the end of the strip. One Ctrl+&lt;last&gt;
     /// normally does it; the index walk is only the fallback.
     /// </summary>
-    private static async Task SelectNewTabAsync(nint frame, nint tab)
+    private static async Task<bool> SelectNewTabAsync(nint frame, nint tab)
     {
         var tabs = ExplorerWindows.GetTabs(frame);
-        if (tabs.Count == 0 || tabs[0] == tab)
-            return;
+        if (tabs.Count == 0 || !tabs.Contains(tab))
+            return false;
+        if (tabs[0] == tab)
+            return true;
 
         SelectTabByIndex(frame, tabs.Count - 1);
         var active = await WaitForActiveTabChangeAsync(frame, tabs[0], 600).ConfigureAwait(false);
         if (active == tab)
-            return;
+            return true;
 
-        await SelectTabByHandleAsync(frame, tab).ConfigureAwait(false);
+        return await SelectTabByHandleAsync(frame, tab).ConfigureAwait(false);
     }
 
     private bool IsEngineCreatedTab(nint tabHandle)
@@ -1138,11 +1155,19 @@ internal sealed class ExplorerWatcher : IDisposable
 
     /// <summary>
     /// Shows <paramref name="location"/> according to the rules: switch to the tab that
-    /// already shows it, otherwise add a tab to the main window (special folders go to the
-    /// left), otherwise open the first window.
+    /// already shows it on this desktop, otherwise add a tab to this desktop's main
+    /// window (special folders go to the left), otherwise open its first window.
     /// </summary>
     public async Task<OpenResult> OpenAsTabAsync(string location, bool activate = true,
         bool allowDuplicate = false, nint excludeFrame = 0, nint preferredWindow = 0)
+    {
+        var desktop = await CaptureDesktopScopeAsync(excludeFrame).ConfigureAwait(false);
+        return await OpenAsTabInScopeAsync(location, desktop, activate, allowDuplicate,
+            excludeFrame, preferredWindow).ConfigureAwait(false);
+    }
+
+    private async Task<OpenResult> OpenAsTabInScopeAsync(string location, ExplorerDesktopScope desktop,
+        bool activate = true, bool allowDuplicate = false, nint excludeFrame = 0, nint preferredWindow = 0)
     {
         var path = PathNormalizer.Normalize(location);
         if (path.Length == 0)
@@ -1151,28 +1176,31 @@ internal sealed class ExplorerWatcher : IDisposable
         await _openLock.WaitAsync().ConfigureAwait(false);
         try
         {
+            // A queued merge must not follow a source window that was moved to a
+            // different desktop while waiting for another open to finish.
+            if (excludeFrame != 0 && !await IsWindowInScopeAsync(excludeFrame, desktop).ConfigureAwait(false))
+                return new OpenResult(OpenOutcome.Failed, path, Message: "The source window changed desktops.");
+
             var settings = Settings;
             var dedupe = !allowDuplicate &&
                          settings.WhenAlreadyOpen == AlreadyOpenBehavior.SwitchToExistingTab;
 
             if (dedupe)
             {
-                var existing = await FindExistingTabAsync(path, excludeFrame).ConfigureAwait(false);
-                if (existing is not null)
+                var existing = await FindExistingTabAsync(path, desktop, excludeFrame).ConfigureAwait(false);
+                if (existing is not null &&
+                    await SwitchToExistingTabAsync(existing.Value.Frame, existing.Value.Tab, desktop, activate)
+                        .ConfigureAwait(false))
                 {
-                    await SelectTabByHandleAsync(existing.Value.Frame, existing.Value.Tab).ConfigureAwait(false);
-                    await RefreshTabAsync(existing.Value.Tab).ConfigureAwait(false);
-                    if (activate)
-                        WindowAnimator.Activate(existing.Value.Frame);
-
-                    _history.Forget(path);
-                    _log.Info($"Switched to the tab that already shows '{path}' (refreshed).");
+                    _history.Forget(path, desktop.Id);
+                    _log.Info($"Switched to the tab that already shows '{path}'.");
                     return new OpenResult(OpenOutcome.SwitchedToExistingTab, path,
                         existing.Value.Frame, existing.Value.Tab);
                 }
             }
 
-            var mainWindow = GetMainWindow(excludeFrame, preferredWindow);
+            var mainWindow = await GetMainWindowAsync(desktop, excludeFrame, preferredWindow)
+                .ConfigureAwait(false);
             if (mainWindow == 0)
                 return OpenNewWindow(path);
 
@@ -1223,9 +1251,9 @@ internal sealed class ExplorerWatcher : IDisposable
                 await NavigateAsync(entry, path).ConfigureAwait(false);
 
             if (activate)
-                WindowAnimator.Activate(mainWindow);
+                await ActivateWindowAsync(mainWindow).ConfigureAwait(false);
 
-            _history.Forget(path);
+            _history.Forget(path, desktop.Id);
             _log.Info($"Opened '{path}' as a tab in 0x{mainWindow:X}.");
             return new OpenResult(OpenOutcome.OpenedNewTab, path, mainWindow, newTab);
         }
@@ -1254,7 +1282,9 @@ internal sealed class ExplorerWatcher : IDisposable
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "explorer.exe",
-                Arguments = $"\"{path}\"",
+                // A bare path can make Explorer itself reuse a window on another
+                // desktop, bypassing our routing. /n explicitly requests a new frame.
+                Arguments = BuildNewWindowArguments(path),
                 UseShellExecute = false
             });
 
@@ -1268,10 +1298,14 @@ internal sealed class ExplorerWatcher : IDisposable
         }
     }
 
+    internal static string BuildNewWindowArguments(string path) => $"/n,\"{path}\"";
+
     /// <summary>Opens a second tab with the folder of the active tab (duplicates allowed).</summary>
     public async Task<OpenResult> DuplicateActiveTabAsync(nint window = 0)
     {
-        var frame = window != 0 ? window : GetMainWindow(0, ExplorerWindows.GetForegroundWindow());
+        var desktop = await CaptureDesktopScopeAsync().ConfigureAwait(false);
+        var frame = await GetMainWindowAsync(desktop,
+            preferred: window != 0 ? window : ExplorerWindows.GetForegroundWindow()).ConfigureAwait(false);
         if (frame == 0)
             return new OpenResult(OpenOutcome.Failed, string.Empty, Message: "No File Explorer window is open.");
 
@@ -1280,32 +1314,39 @@ internal sealed class ExplorerWatcher : IDisposable
         if (entry is null || entry.Location.Length == 0)
             return new OpenResult(OpenOutcome.Failed, string.Empty, Message: "The active tab reports no folder.");
 
-        return await OpenAsTabAsync(entry.Location, activate: true, allowDuplicate: true,
+        return await OpenAsTabInScopeAsync(entry.Location, desktop, activate: true, allowDuplicate: true,
             preferredWindow: frame).ConfigureAwait(false);
     }
 
     /// <summary>Reopens the most recently closed folder as a tab.</summary>
     public async Task<OpenResult> ReopenLastClosedAsync(nint window = 0)
     {
-        var closed = _history.TakeMostRecent();
+        var desktop = await CaptureDesktopScopeAsync().ConfigureAwait(false);
+        var closed = _history.TakeMostRecent(desktop.Id);
         if (closed is null)
             return new OpenResult(OpenOutcome.Failed, string.Empty, Message: "No recently closed folder.");
 
-        return await OpenAsTabAsync(closed.Path, activate: true, preferredWindow: window).ConfigureAwait(false);
+        return await OpenAsTabInScopeAsync(closed.Path, desktop, activate: true, preferredWindow: window)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Folds every other window's tabs into the main window and closes those windows.
-    /// Explicit action (tray menu / --consolidate), also used right after start.
+    /// Folds other windows on the current desktop into that desktop's main window.
+    /// Explicit action (tray menu / --single-window); other desktops are left alone.
     /// </summary>
     public async Task<int> ConsolidateAsync(nint keepWindow = 0)
     {
-        var target = GetMainWindow(0, keepWindow != 0 ? keepWindow : ExplorerWindows.GetForegroundWindow());
+        var desktop = await CaptureDesktopScopeAsync().ConfigureAwait(false);
+        var target = await GetMainWindowAsync(desktop,
+            preferred: keepWindow != 0 ? keepWindow : ExplorerWindows.GetForegroundWindow()).ConfigureAwait(false);
         if (target == 0)
             return 0;
 
         var folded = 0;
-        foreach (var frame in ExplorerWindows.GetWindows().Where(w => w != target).ToList())
+        var frames = await _sta.RunWithTimeoutAsync(() => ExplorerWindows.GetWindows()
+            .Where(w => w != target && _desktops?.IsInScope(w, desktop) == true).ToList(),
+            new List<nint>(), 2000).ConfigureAwait(false);
+        foreach (var frame in frames)
         {
             List<TabEntry> tabs;
             lock (_gate)
@@ -1325,7 +1366,7 @@ internal sealed class ExplorerWatcher : IDisposable
             foreach (var tab in tabs)
             {
                 tab.Folding = true;
-                var result = await OpenAsTabAsync(tab.Location, activate: false,
+                var result = await OpenAsTabInScopeAsync(tab.Location, desktop, activate: false,
                     excludeFrame: frame, preferredWindow: target).ConfigureAwait(false);
 
                 if (!result.Succeeded || result.Outcome == OpenOutcome.OpenedNewWindow)
@@ -1336,8 +1377,13 @@ internal sealed class ExplorerWatcher : IDisposable
                 }
             }
 
-            if (!allMoved)
+            if (!allMoved || !await IsWindowInScopeAsync(frame, desktop).ConfigureAwait(false) ||
+                !await IsWindowInScopeAsync(target, desktop).ConfigureAwait(false))
+            {
+                foreach (var tab in tabs)
+                    tab.Folding = false;
                 continue;
+            }
 
             await _sta.RunWithTimeoutAsync<bool>(() =>
             {
@@ -1354,7 +1400,7 @@ internal sealed class ExplorerWatcher : IDisposable
 
         if (folded > 0)
         {
-            WindowAnimator.Activate(target);
+            await ActivateWindowAsync(target).ConfigureAwait(false);
             Activity?.Invoke(this, folded == 1
                 ? "Folded an extra Explorer window into tabs."
                 : $"Folded {folded} extra Explorer windows into tabs.");
@@ -1367,9 +1413,19 @@ internal sealed class ExplorerWatcher : IDisposable
     // Dedupe / tab selection
     // ------------------------------------------------------------------
 
+    private async Task<bool> SwitchToExistingTabAsync(nint frame, nint tab, ExplorerDesktopScope desktop,
+        bool activate = true)
+    {
+        if (!await IsWindowInScopeAsync(frame, desktop).ConfigureAwait(false))
+            return false;
+
+        return await TabSwitcher.SwitchAsync(frame, tab, activate, ActivateWindowAsync,
+            SelectTabByHandleAsync, RefreshTabAsync).ConfigureAwait(false);
+    }
+
     /// <summary>
-    /// F5 on one tab: the folder view re-reads its content. Every switch to an already
-    /// open tab refreshes it, so it never shows the state from when it was last visited.
+    /// Refresh the actual folder view after selection has finished and its navigation is
+    /// quiet. IWebBrowser2.Refresh alone can silently do nothing during a tab switch.
     /// </summary>
     private async Task RefreshTabAsync(nint tab)
     {
@@ -1377,56 +1433,67 @@ internal sealed class ExplorerWatcher : IDisposable
         if (entry is null)
             return;
 
-        await _sta.RunWithTimeoutAsync<bool>(() =>
+        await WaitForSettledLocationAsync(entry, 1500).ConfigureAwait(false);
+        var refreshed = await _sta.RunWithTimeoutAsync(() =>
         {
-            try { entry.Browser.Refresh(); }
-            catch { /* the tab may be closing */ }
-            return true;
+            if (!NativeMethods.IsWindow(tab))
+                return false;
+
+            if (entry.Browser is IServiceProviderNative provider && ShellViewRefresher.TryRefresh(provider, tab))
+                return true;
+
+            // Some shell versions do not expose a view through the browser service.
+            // Keep the automation refresh as a fallback, and report failures, not success.
+            try
+            {
+                entry.Browser.Refresh();
+                return true;
+            }
+            catch { return false; }
         }, false, 2000).ConfigureAwait(false);
+
+        if (!refreshed)
+            _log.Warn($"Could not refresh Explorer tab 0x{tab:X} ('{entry.Location}').");
     }
 
-    /// <summary>The tab that already shows <paramref name="path"/>, or null.</summary>
-    private async Task<(nint Frame, nint Tab)?> FindExistingTabAsync(string path, nint excludeFrame = 0,
-        nint excludeTab = 0)
+    /// <summary>The tab that already shows this folder on the request's desktop, or null.</summary>
+    private async Task<(nint Frame, nint Tab)?> FindExistingTabAsync(string path, ExplorerDesktopScope desktop,
+        nint excludeFrame = 0, nint excludeTab = 0)
     {
-        List<TabEntry> candidates;
+        List<TabEntry> snapshot;
         lock (_gate)
         {
-            candidates = _entries
+            snapshot = _entries
                 .Where(e => !e.Folding &&
                             e.TabHandle != 0 && e.TabHandle != excludeTab &&
-                            (excludeFrame == 0 || e.FrameHandle != excludeFrame) &&
-                            e.Location.Length > 0)
+                            e.FrameHandle != excludeFrame && e.Location.Length > 0)
                 .ToList();
         }
 
-        if (candidates.Count == 0)
+        if (snapshot.Count == 0)
             return null;
 
-        // Fast textual pass first; then the shell compares PIDLs, exactly like Explorer
-        // decides whether two paths are the same folder (short names, junctions, GUIDs).
-        foreach (var entry in candidates)
+        return await _sta.RunWithTimeoutAsync<(nint Frame, nint Tab)?>(() =>
         {
-            if (string.Equals(entry.Location, path, StringComparison.OrdinalIgnoreCase))
-                return Validate(entry);
-        }
+            // Query desktop membership live, not from the tab's registration time: the
+            // user may have moved its window in Task View. Apply the same filter to BOTH
+            // the fast textual pass and the PIDL-equivalence pass.
+            var candidates = snapshot.Where(e => !e.Folding && NativeMethods.IsWindow(e.TabHandle) &&
+                _desktops?.IsInScope(e.FrameHandle, desktop) == true).ToList();
 
-        var match = await _sta.RunWithTimeoutAsync<TabEntry?>(() =>
-        {
+            foreach (var entry in candidates)
+            {
+                if (string.Equals(entry.Location, path, StringComparison.OrdinalIgnoreCase))
+                    return (entry.FrameHandle, entry.TabHandle);
+            }
+
             foreach (var entry in candidates)
             {
                 if (_comparer is not null && _comparer.IsEquivalent(entry.Location, path))
-                    return entry;
+                    return (entry.FrameHandle, entry.TabHandle);
             }
             return null;
         }, null, 3000).ConfigureAwait(false);
-
-        return match is null ? null : Validate(match);
-
-        (nint Frame, nint Tab)? Validate(TabEntry entry) =>
-            NativeMethods.IsWindow(entry.TabHandle)
-                ? (entry.FrameHandle != 0 ? entry.FrameHandle : NativeMethods.GetParent(entry.TabHandle), entry.TabHandle)
-                : null;
     }
 
     /// <summary>
@@ -1434,11 +1501,11 @@ internal sealed class ExplorerWatcher : IDisposable
     /// 0, 1, 2, ... until the tab in front is the right one (the z-order only tells us
     /// which tab is active, not where the others sit in the strip).
     /// </summary>
-    private static async Task SelectTabByHandleAsync(nint frame, nint tab)
+    private static async Task<bool> SelectTabByHandleAsync(nint frame, nint tab)
     {
         var tabs = ExplorerWindows.GetTabs(frame);
-        if (tabs.Count == 0)
-            return;
+        if (tabs.Count == 0 || !tabs.Contains(tab))
+            return false;
 
         var active = tabs[0];
         for (var i = 0; i < tabs.Count && active != tab; i++)
@@ -1446,6 +1513,8 @@ internal sealed class ExplorerWatcher : IDisposable
             SelectTabByIndex(frame, i);
             active = await WaitForActiveTabChangeAsync(frame, active, 600).ConfigureAwait(false);
         }
+
+        return active == tab;
     }
 
     /// <summary>Ctrl+1..n (0xA221): selects the tab at a 0-based strip position.</summary>
@@ -1693,31 +1762,36 @@ internal sealed class ExplorerWatcher : IDisposable
     // Main window
     // ------------------------------------------------------------------
 
-    /// <summary>The window every tab goes into.</summary>
-    private nint GetMainWindow(nint excludeFrame, nint preferred = 0)
+    private Task<ExplorerDesktopScope> CaptureDesktopScopeAsync(nint sourceFrame = 0) =>
+        _sta.RunWithTimeoutAsync(() => _desktops?.CaptureScope(sourceFrame) ?? default,
+            default(ExplorerDesktopScope), 2000);
+
+    private Task<bool> IsWindowInScopeAsync(nint frame, ExplorerDesktopScope desktop) =>
+        _sta.RunWithTimeoutAsync(() => _desktops?.IsInScope(frame, desktop) == true, false, 2000);
+
+    /// <summary>The main window on the request's desktop, never a window on another desktop.</summary>
+    private Task<nint> GetMainWindowAsync(ExplorerDesktopScope desktop, nint excludeFrame = 0, nint preferred = 0) =>
+        _sta.RunWithTimeoutAsync(() =>
+        {
+            HashSet<nint> folding;
+            lock (_gate)
+                folding = _entries.Where(e => e.Folding).Select(e => e.FrameHandle).ToHashSet();
+
+            var windows = ExplorerWindows.GetWindows()
+                .Where(w => !folding.Contains(w))
+                .Select(w => new ExplorerWindowInfo(w, _desktops?.GetWindowDesktopId(w),
+                    ExplorerWindows.GetTabs(w).Count, _desktops?.IsOnCurrentDesktop(w) == true))
+                .ToList();
+            return _windowRouter.GetMainWindow(desktop, windows, excludeFrame, preferred);
+        }, (nint)0, 2500);
+
+    /// <summary>Never pull the user back to another desktop when delayed shell work finishes.</summary>
+    private async Task ActivateWindowAsync(nint frame)
     {
-        if (preferred != 0 && preferred != excludeFrame &&
-            NativeMethods.HasClassName(preferred, NativeMethods.ExplorerWindowClass))
+        await _sta.RunWithTimeoutAsync(() =>
         {
-            _mainWindow = preferred;
-            return preferred;
-        }
-
-        if (_mainWindow != 0 && _mainWindow != excludeFrame &&
-            NativeMethods.IsWindow(_mainWindow) &&
-            NativeMethods.HasClassName(_mainWindow, NativeMethods.ExplorerWindowClass))
-        {
-            return _mainWindow;
-        }
-
-        // The oldest window with the most tabs is the one the user has been assembling.
-        _mainWindow = ExplorerWindows.GetWindows()
-            .Where(w => w != excludeFrame)
-            .Reverse()
-            .OrderByDescending(w => ExplorerWindows.GetTabs(w).Count)
-            .FirstOrDefault();
-
-        return _mainWindow;
+            return _desktops?.IsOnCurrentDesktop(frame) == true && WindowAnimator.Activate(frame);
+        }, false, 2000).ConfigureAwait(false);
     }
 
     // ------------------------------------------------------------------

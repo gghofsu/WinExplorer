@@ -78,11 +78,11 @@ turns that window into a tab:
    fails, the window is restored normally rather than being left invisible.
 2. **`WindowRegistered` fires.** The watcher finds the unseen entry (polling the collection
    for up to 2.5 s), waits briefly for its location, and decides whether to fold. It folds
-   only a *single-tab* window that is not the main window, when at least one other tab
-   exists to fold into.
+   only a *single-tab* window that is not its virtual desktop's main window, when another
+   window on that same desktop exists to fold into.
 3. **Open as tab.** The normal open policy runs: if the folder is already shown in a
-   tracked tab, that tab is selected; otherwise the main window gets a new tab which is
-   navigated to the folder (section 4).
+   tracked tab on the source window's desktop, that tab is selected and refreshed;
+   otherwise that desktop's main window gets a new tab navigated to the folder (section 4).
 4. **Quit the surplus window** via its `IWebBrowser2.Quit()`. If anything failed, the
    hidden window is made visible again instead — nothing is ever lost or left invisible.
 
@@ -93,11 +93,35 @@ It deliberately leaves windows alone when:
 - `Ctrl+Shift` is held at that moment (the explicit "I want a window" gesture),
 - the location is unknown, Control Panel, or on the exclusion list,
 - the window has more than one tab (the user assembled it),
-- the folder appears in the closed-tabs history of the last 2 seconds — that is a tab the
-  user just **dragged out** of a window, which must stay a window,
-- there is no other window to fold into.
+- the folder appears in that desktop's closed-tabs history of the last 2 seconds — that
+  is a tab the user just **dragged out** of a window, which must stay a window,
+- there is no other window on the same virtual desktop to fold into.
 
 A safety net reveals any window that stayed hidden for more than ~4 seconds.
+
+### Virtual desktop boundaries
+
+The documented `IVirtualDesktopManager` provides `GetWindowDesktopId` and
+`IsWindowOnCurrentVirtualDesktop`. `ExplorerWindowRouter` remembers a separate main window
+per desktop GUID, validates cached handles against live desktop membership, and ignores a
+preferred `--hwnd` on another desktop. When no suitable window exists, Explorer is launched
+with `/n` to force a new frame: a bare path can make Explorer itself reuse a window on a
+different desktop before the watcher sees any new window. WinExplorer never moves windows
+between desktops.
+
+External/IPC opens capture the active desktop before joining the serial open queue. Shell
+registrations use the new frame's desktop, not the tray/settings window's desktop, even
+if the user switches desktops while its folder loads. Both textual and PIDL duplicate
+searches filter candidates to that scope, including the late user-tab duplicate retry.
+Activation is additionally restricted to the current desktop, so delayed shell work cannot
+pull the user back to another desktop.
+
+The hide hook owns its own virtual desktop COM object on its dedicated STA: it only cloaks
+a new frame if another tracked window exists on the same desktop. Thus the first Explorer
+window on Desktop 2 is left visible even if Desktop 1 has many tabs. Unknown desktop IDs
+never match (not even another unknown ID); a shell failure preserves the new window rather
+than guessing a cross-desktop destination. The explicit collection command only considers
+the current desktop. Reopen history and the dragged-out-tab check are desktop-scoped too.
 
 ## 4. Creating and addressing tabs
 
@@ -151,9 +175,19 @@ desktop.CompareIDs(0, pidl1, pidl2) == 0   →  same folder
 
 This is exactly how Explorer decides whether two paths are the same folder. Tabs that are
 currently being folded are never used as a dedupe target, and a matched tab is validated
-with `IsWindow` before it is selected. Whenever a request switches to an existing tab, that
-tab is **refreshed** (`IWebBrowser2.Refresh`, i.e. F5) on the way, so it never shows the
-folder as it looked when it was last visited.
+with `IsWindow` before it is selected. All three reuse paths (external opens, user-created
+tabs and their late duplicate retry) use the same `TabSwitcher` sequence:
+
+1. Restore/activate the destination window, unless `--no-activate` was requested.
+2. Select the requested tab and confirm its handle is the active tab.
+3. Wait briefly for navigation to settle, then refresh the **actual folder view** through
+   `IShellBrowser.QueryActiveShellView` → `IShellView.Refresh` (the F5 behaviour).
+
+The view is checked against the requested tab's handle before refreshing it. Browser
+activation alone is not a refresh, and `IWebBrowser2.Refresh` sent while a tab is still
+switching can silently do nothing. It remains a fallback when the shell does not expose a
+view; failed refreshes are logged instead of silently reported as successful. Opening a
+tab that was already active still follows the refresh path.
 
 ### Tabs the user creates inside a window
 
@@ -166,7 +200,7 @@ touches:
   watcher waits until the shell reports a folder that stops changing and no navigation is
   in flight (`Busy`) before it decides anything — deciding duplicates against an empty or
   transient folder is how the same folder ends up in two tabs;
-- if its folder is already shown in any tracked tab, the just-created duplicate is closed
+- if its folder is already shown in a tracked tab on the same desktop, the duplicate is closed
   and the existing tab (and its window) is selected **and refreshed**;
 - when the folder does not arrive in time, the duplicate check is **retried the moment the
   tab's navigation completes** (within ~10 s), so a slow folder still switches instead of

@@ -3,7 +3,7 @@ namespace WinExplorer.Core;
 /// <summary>How a folder should be opened.</summary>
 public enum OpenMode
 {
-    /// <summary>Switch to the tab that already shows it, otherwise open a tab in the existing window.</summary>
+    /// <summary>Switch to the tab on this virtual desktop, otherwise open a tab in its existing window.</summary>
     ReuseExistingTab = 0,
 
     /// <summary>Always create a new tab, even when the folder is already open (duplicates allowed).</summary>

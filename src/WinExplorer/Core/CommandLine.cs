@@ -311,7 +311,7 @@ public static class CommandLine
 
     /// <summary>Text shown by <c>--help</c> and in the README.</summary>
     public const string Usage = """
-        WinExplorer - folds every File Explorer window into one tabbed window.
+        WinExplorer - one tabbed File Explorer window per virtual desktop.
 
         Usage:
           WinExplorer.exe                         Show the settings window
@@ -325,7 +325,7 @@ public static class CommandLine
           WinExplorer.exe --pause | --resume | --toggle
           WinExplorer.exe --install-context-menu | --uninstall-context-menu
           WinExplorer.exe --install-startup | --uninstall-startup | --toggle-startup
-          WinExplorer.exe --single-window        Fold every Explorer window into one tabbed window
+          WinExplorer.exe --single-window        Collect this desktop's Explorer windows into tabs
           WinExplorer.exe --restart              Restart the helper (recovers a stuck copy)
           WinExplorer.exe --diagnose             Write a diagnostics report and open it
           WinExplorer.exe --probe                List every window, tab and folder the app can see
