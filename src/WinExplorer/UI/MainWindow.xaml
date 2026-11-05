@@ -72,12 +72,12 @@
 
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Text="One window, many tabs" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="One window per desktop, many tabs" Style="{StaticResource SectionTitle}" />
 
-                                <CheckBox Content="Keep a single File Explorer window"
+                                <CheckBox Content="Keep a single File Explorer window per virtual desktop"
                                           IsChecked="{Binding SingleWindowMode, Mode=TwoWay}" />
                                 <TextBlock Style="{StaticResource Caption}" Margin="27,0,0,6"
-                                           Text="Every new Explorer window - from the desktop, Start, the taskbar, Win+E or another app - is reopened as a tab in the window you already have. Hold Ctrl+Shift while a folder opens to get a real, separate window." />
+                                           Text="Every new Explorer window - from the desktop, Start, the taskbar, Win+E or another app - is reopened as a tab in the window on the same virtual desktop. The first folder on each desktop opens its own window. Hold Ctrl+Shift while a folder opens to get a real, separate window." />
 
                                 <Grid Margin="0,8,0,0">
                                     <Grid.ColumnDefinitions>
@@ -93,7 +93,7 @@
                                               SelectedValue="{Binding WhenAlreadyOpen, Mode=TwoWay}" />
                                 </Grid>
                                 <TextBlock Style="{StaticResource Caption}" Margin="0,6,0,8"
-                                           Text="With the default choice a folder never gets a second tab: its existing tab is brought to the front instead. Duplicates are still possible on purpose - the duplicate shortcut, or --new-tab on the command line." />
+                                           Text="With the default choice a folder never gets a second tab on the same virtual desktop: its existing tab is brought to the front and refreshed instead. Other desktops keep their own tabs. Duplicates are still possible on purpose - the duplicate shortcut, or --new-tab on the command line." />
 
                                 <CheckBox Content="Keep Home, This PC, Desktop and Downloads at the left"
                                           IsChecked="{Binding KeepSpecialFoldersFirst, Mode=TwoWay}" />

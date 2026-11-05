@@ -1,11 +1,13 @@
 namespace WinExplorer.Core;
 
 /// <summary>A folder that was open in a tab and is not any more.</summary>
-public sealed record ClosedTab(string Path, DateTimeOffset ClosedAt, string? DisplayName = null);
+public sealed record ClosedTab(string Path, DateTimeOffset ClosedAt, string? DisplayName = null,
+    Guid? DesktopId = null);
 
 /// <summary>
 /// A bounded, de-duplicated stack of recently closed folders. Feeds the
-/// "reopen the last closed tab" command. Thread safe.
+/// "reopen the last closed tab" command. Folder identity includes the virtual desktop;
+/// desktop-scoped queries leave other desktops' entries untouched. Thread safe.
 /// </summary>
 public sealed class TabHistory
 {
@@ -21,7 +23,7 @@ public sealed class TabHistory
     }
 
     /// <summary>Records a folder as closed (most recent first).</summary>
-    public void RecordClosed(string? path, DateTimeOffset? at = null)
+    public void RecordClosed(string? path, DateTimeOffset? at = null, Guid? desktopId = null)
     {
         var normalized = PathNormalizer.Normalize(path);
         if (string.IsNullOrEmpty(normalized))
@@ -29,11 +31,12 @@ public sealed class TabHistory
 
         lock (_gate)
         {
-            // Drop an older entry for the same folder so "reopen" always resolves to the
-            // newest record and the stack cannot fill with duplicates.
+            // Drop an older entry for the same folder on the same desktop so "reopen"
+            // resolves to the newest record without clearing another desktop's history.
             for (var node = _items.First; node is not null; node = node.Next)
             {
-                if (string.Equals(node.Value.Path, normalized, StringComparison.OrdinalIgnoreCase))
+                if (node.Value.DesktopId == desktopId &&
+                    string.Equals(node.Value.Path, normalized, StringComparison.OrdinalIgnoreCase))
                 {
                     _items.Remove(node);
                     break;
@@ -41,23 +44,26 @@ public sealed class TabHistory
             }
 
             _items.AddFirst(new ClosedTab(normalized, at ?? DateTimeOffset.Now,
-                PathNormalizer.ToDisplayName(normalized)));
+                PathNormalizer.ToDisplayName(normalized), desktopId));
 
             while (_items.Count > _capacity)
                 _items.RemoveLast();
         }
     }
 
-    /// <summary>Removes and returns the most recently closed folder.</summary>
-    public ClosedTab? TakeMostRecent()
+    /// <summary>Removes and returns the most recently closed folder, optionally on one desktop.</summary>
+    public ClosedTab? TakeMostRecent(Guid? desktopId = null)
     {
         lock (_gate)
         {
-            if (_items.First is null)
+            var node = _items.First;
+            while (node is not null && desktopId is not null && node.Value.DesktopId != desktopId)
+                node = node.Next;
+            if (node is null)
                 return null;
 
-            var item = _items.First.Value;
-            _items.RemoveFirst();
+            var item = node.Value;
+            _items.Remove(node);
             return item;
         }
     }
@@ -68,7 +74,7 @@ public sealed class TabHistory
     /// out of a window: closing the tab and the new window appear within moments of each
     /// other, and that window must stay a window.
     /// </summary>
-    public bool WasClosedRecently(string? path, int maxAgeMs)
+    public bool WasClosedRecently(string? path, int maxAgeMs, Guid? desktopId = null)
     {
         var normalized = PathNormalizer.Normalize(path);
         if (string.IsNullOrEmpty(normalized))
@@ -82,7 +88,8 @@ public sealed class TabHistory
                 if (item.ClosedAt < cutoff)
                     break;
 
-                if (string.Equals(item.Path, normalized, StringComparison.OrdinalIgnoreCase))
+                if ((desktopId is null || item.DesktopId == desktopId) &&
+                    string.Equals(item.Path, normalized, StringComparison.OrdinalIgnoreCase))
                     return true;
             }
         }
@@ -91,7 +98,7 @@ public sealed class TabHistory
     }
 
     /// <summary>Removes a folder from the history (e.g. it was reopened by the user).</summary>
-    public void Forget(string? path)
+    public void Forget(string? path, Guid? desktopId = null)
     {
         var normalized = PathNormalizer.Normalize(path);
         if (string.IsNullOrEmpty(normalized))
@@ -101,7 +108,8 @@ public sealed class TabHistory
         {
             for (var node = _items.First; node is not null; node = node.Next)
             {
-                if (string.Equals(node.Value.Path, normalized, StringComparison.OrdinalIgnoreCase))
+                if ((desktopId is null || node.Value.DesktopId == desktopId) &&
+                    string.Equals(node.Value.Path, normalized, StringComparison.OrdinalIgnoreCase))
                 {
                     _items.Remove(node);
                     return;

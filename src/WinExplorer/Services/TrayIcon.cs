@@ -46,7 +46,7 @@ internal sealed class TrayIcon : IDisposable
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Duplicate active tab", null, (_, _) => duplicateTab()));
         menu.Items.Add(new ToolStripMenuItem("Reopen closed folder", null, (_, _) => reopenClosed()));
-        menu.Items.Add(new ToolStripMenuItem("Collect windows into one", null, (_, _) => collectWindows()));
+        menu.Items.Add(new ToolStripMenuItem("Collect windows into one (this desktop)", null, (_, _) => collectWindows()));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Open log file", null, (_, _) => openLog()));
         menu.Items.Add(new ToolStripSeparator());

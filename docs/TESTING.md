@@ -15,7 +15,11 @@ dotnet test WinExplorer.sln -c Release
 | Path normalisation (URLs, slashes, `%VARS%`, shell GUIDs) | `PathNormalizerTests` |
 | Shortcut parsing / rendering / conflict checks | `HotkeySpecTests` |
 | Command line parsing (context menu verbs, switches, errors) | `CommandLineTests` |
-| Closed-tab history (order, capacity, de-duplication) | `TabHistoryTests` |
+| Closed-tab history (order, capacity, de-duplication, desktop isolation) | `TabHistoryTests` |
+| Per-desktop main windows, unknown desktop IDs, preferred handles and moved/closed windows | `ExplorerWindowRouterTests` |
+| Forced new Explorer frames (including quoted, UNC and shell paths) | `ExplorerLaunchTests` |
+| Activate → confirm selection → refresh ordering (including `--no-activate`) | `TabSwitcherTests` |
+| Actual shell view refresh, wrong-tab protection and failed/unavailable COM services | `ShellViewRefresherTests` |
 | Settings round-trip, corrupt files, sanitising | `SettingsStoreTests` |
 | Folder name → path resolution (incl. `..` escapes, files, virtual folders) | `FolderResolutionTests` |
 
@@ -79,7 +83,7 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
 - [ ] Middle-click a folder not already open → a new tab is selected immediately.
 - [ ] Middle-click or choose *Open in new tab* for a folder already open → no duplicate
       remains; the existing folder tab is selected and refreshed (including across Explorer
-      windows).
+      windows on the same virtual desktop).
 - [ ] Middle-click a folder that is already open **while the shell is busy** (several
       middle-clicks in a row, or on a slow/network folder) → still no duplicate remains;
       the existing tab is selected once the folder has loaded.
@@ -91,6 +95,42 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
 - [ ] Right-click a folder → *Open in new window* → a separate window, even with window
       folding enabled.
 - [ ] `WinExplorer.exe --open "C:\Temp" --new-window` → new window.
+
+### Reopening a folder refreshes its files
+
+- [ ] Open a folder with files, switch to a different tab, then create/delete a file in the
+      original folder using another application or PowerShell. Open that original folder
+      again from the desktop, another app, and `WinExplorer.exe --open <folder>` → its
+      existing tab is selected and the listing reflects the change without pressing F5.
+- [ ] Repeat while the destination Explorer window is **minimized** → it is restored,
+      the correct tab is selected, and files appear without a manual refresh.
+- [ ] Repeat while the folder's tab is **already selected**, including a folder whose view
+      was initially empty → the listing still refreshes on every repeated open.
+- [ ] Repeat with `--no-activate` → the listing refreshes without bringing Explorer forward.
+
+### Separate virtual desktops (Win+Tab)
+
+- [ ] Create Desktop 1 and Desktop 2. Open folder A on Desktop 1, then switch to Desktop 2
+      and open folder B from the desktop/Start/another app → a new, visible Explorer window
+      opens on Desktop 2; Desktop 1's window and tabs are untouched.
+- [ ] Open folder C on Desktop 2 → C joins B as a tab in Desktop 2's window. Switch back to
+      Desktop 1 and open folder D → D joins A, not B/C. Repeat several times in both directions.
+- [ ] Open the **same folder A** on Desktop 2 → A opens locally there, not in Desktop 1's
+      window. Open A again on each desktop → only that desktop's A tab is selected/refreshed.
+- [ ] Ctrl+T / middle-click / *Open in new tab* for A on Desktop 2, including a slow folder
+      whose path arrives late → duplicate detection stays within Desktop 2 and does not
+      select or close Desktop 1's A tab.
+- [ ] Repeat external opens using Win+E takeover, `--new-tab`, and `--hwnd` with the handle
+      of Desktop 1's window while on Desktop 2 → Desktop 1 is never chosen as the destination.
+- [ ] Make a deliberate extra window on each desktop (Ctrl+Shift). On Desktop 2 use the tray
+      collection action or `--single-window` → only Desktop 2's windows are consolidated.
+- [ ] Move an Explorer window using Task View → subsequent opens use its **new** desktop;
+      no stale main-window handle pulls a request to the old desktop.
+- [ ] Close A on Desktop 1, immediately open A from another app on Desktop 2 → it merges
+      normally there (not misidentified as a dragged-out tab from Desktop 1). The reopen
+      shortcut on each desktop restores only that desktop's last closed folder.
+- [ ] Start a slow folder open, switch desktops before it completes → no activation pulls
+      you back to the other desktop, and source/destination windows stay on their desktops.
 
 ### Shortcuts and state
 

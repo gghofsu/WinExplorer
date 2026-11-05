@@ -99,7 +99,7 @@ internal interface IServiceProviderNative
         [MarshalAs(UnmanagedType.Interface)] out IShellBrowser? service);
 }
 
-/// <summary><c>IShellBrowser</c> - only its first method is needed.</summary>
+/// <summary>The part of IShellBrowser needed to identify a tab and refresh its folder view.</summary>
 [ComImport]
 [Guid("000214E2-0000-0000-C000-000000000046")]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -107,4 +107,10 @@ internal interface IShellBrowser
 {
     [PreserveSig]
     int GetWindow(out nint hwnd);
+
+    // IOleWindow.ContextSensitiveHelp, then InsertMenusSB through SendControlMsg.
+    void _VtblGap1_11();
+
+    [PreserveSig]
+    int QueryActiveShellView([MarshalAs(UnmanagedType.Interface)] out IShellView? view);
 }

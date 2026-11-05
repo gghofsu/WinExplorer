@@ -75,6 +75,61 @@ public class TabHistoryTests
     }
 
     [Fact]
+    public void The_same_folder_can_be_closed_independently_on_two_desktops()
+    {
+        var history = new TabHistory();
+        var desktop1 = Guid.NewGuid();
+        var desktop2 = Guid.NewGuid();
+        history.RecordClosed(@"C:\shared", desktopId: desktop1);
+        history.RecordClosed(@"C:\shared", desktopId: desktop2);
+
+        Assert.Equal(2, history.Count);
+        Assert.Equal(desktop1, history.TakeMostRecent(desktop1)!.DesktopId);
+        Assert.Equal(desktop2, history.TakeMostRecent(desktop2)!.DesktopId);
+    }
+
+    [Fact]
+    public void Reopen_only_takes_a_folder_from_the_requested_desktop()
+    {
+        var history = new TabHistory();
+        var desktop1 = Guid.NewGuid();
+        var desktop2 = Guid.NewGuid();
+        history.RecordClosed(@"C:\desktop1", desktopId: desktop1);
+        history.RecordClosed(@"C:\desktop2", desktopId: desktop2);
+
+        Assert.Equal(@"C:\desktop1", history.TakeMostRecent(desktop1)!.Path);
+        Assert.Null(history.TakeMostRecent(desktop1));
+        Assert.Equal(@"C:\desktop2", history.TakeMostRecent(desktop2)!.Path);
+    }
+
+    [Fact]
+    public void A_close_on_another_desktop_is_not_mistaken_for_a_dragged_out_tab()
+    {
+        var history = new TabHistory();
+        var desktop1 = Guid.NewGuid();
+        var desktop2 = Guid.NewGuid();
+        history.RecordClosed(@"C:\shared", desktopId: desktop1);
+
+        Assert.True(history.WasClosedRecently(@"C:\shared", 2000, desktop1));
+        Assert.False(history.WasClosedRecently(@"C:\shared", 2000, desktop2));
+    }
+
+    [Fact]
+    public void Reopening_a_folder_does_not_clear_another_desktops_history()
+    {
+        var history = new TabHistory();
+        var desktop1 = Guid.NewGuid();
+        var desktop2 = Guid.NewGuid();
+        history.RecordClosed(@"C:\shared", desktopId: desktop1);
+        history.RecordClosed(@"C:\shared", desktopId: desktop2);
+
+        history.Forget(@"C:\shared", desktop1);
+
+        Assert.Single(history.Snapshot());
+        Assert.Equal(desktop2, history.TakeMostRecent()!.DesktopId);
+    }
+
+    [Fact]
     public void Snapshot_is_ordered_newest_first()
     {
         var history = new TabHistory();

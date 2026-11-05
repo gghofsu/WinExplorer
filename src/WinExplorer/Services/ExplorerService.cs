@@ -98,7 +98,7 @@ internal sealed class ExplorerService : IDisposable
         return result;
     }
 
-    /// <summary>Folds every other Explorer window into one tabbed window.</summary>
+    /// <summary>Folds other Explorer windows on the current virtual desktop into one window.</summary>
     public Task<int> ConsolidateWindowsAsync(nint keepWindow = 0, bool force = false,
         CancellationToken cancellationToken = default)
     {
