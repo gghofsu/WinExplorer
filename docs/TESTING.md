@@ -84,6 +84,9 @@ Preparation: start `WinExplorer.exe`, make sure the header says **Active**, and 
 - [ ] Middle-click or choose *Open in new tab* for a folder already open → no duplicate
       remains; the existing folder tab is selected and refreshed (including across Explorer
       windows on the same virtual desktop).
+- [ ] Open the same folder four or more times in a row via Quick Access → *Open in new
+      tab* → still no duplicate remains each time, and the other tabs never change; the
+      existing tab is selected and refreshed on every open.
 - [ ] Middle-click a folder that is already open **while the shell is busy** (several
       middle-clicks in a row, or on a slow/network folder) → still no duplicate remains;
       the existing tab is selected once the folder has loaded.
