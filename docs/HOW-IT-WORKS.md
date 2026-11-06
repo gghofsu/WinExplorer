@@ -111,10 +111,12 @@ between desktops.
 
 External/IPC opens capture the active desktop before joining the serial open queue. Shell
 registrations use the new frame's desktop, not the tray/settings window's desktop, even
-if the user switches desktops while its folder loads. Both textual and PIDL duplicate
-searches filter candidates to that scope, including the late user-tab duplicate retry.
-Activation is additionally restricted to the current desktop, so delayed shell work cannot
-pull the user back to another desktop.
+if the user switches desktops while its folder loads. Duplicate candidates in the
+requesting window's own frame need no COM probe at all (one frame is one desktop);
+candidates in other frames are checked live and fall back to the desktop id stored when
+they registered, and a candidate whose desktop cannot be verified is rejected, never
+trusted. Activation is additionally restricted to the current desktop, so delayed shell
+work cannot pull the user back to another desktop.
 
 The hide hook owns its own virtual desktop COM object on its dedicated STA: it only cloaks
 a new frame if another tracked window exists on the same desktop. Thus the first Explorer
@@ -183,11 +185,14 @@ tabs and their late duplicate retry) use the same `TabSwitcher` sequence:
 3. Wait briefly for navigation to settle, then refresh the **actual folder view** through
    `IShellBrowser.QueryActiveShellView` → `IShellView.Refresh` (the F5 behaviour).
 
-The view is checked against the requested tab's handle before refreshing it. Browser
-activation alone is not a refresh, and `IWebBrowser2.Refresh` sent while a tab is still
-switching can silently do nothing. It remains a fallback when the shell does not expose a
-view; failed refreshes are logged instead of silently reported as successful. Opening a
-tab that was already active still follows the refresh path.
+The view is checked against the requested tab's handle before refreshing it. Selecting a
+tab makes Explorer swap the view in asynchronously — a background tab's view can even be
+discarded — so a refresh sent right after the switch can hit a view that does not exist
+yet and silently do nothing (the empty-folder symptom). The refresh is therefore retried
+until the shell exposes the tab's view (about a second); when it never does, browser
+automation is tried once and an **F5 keystroke is sent to the tab** — the same remedy the
+user applies manually. Browser activation alone is not a refresh; opening a tab that was
+already active still follows the refresh path.
 
 ### Tabs the user creates inside a window
 
@@ -201,7 +206,9 @@ touches:
   in flight (`Busy`) before it decides anything — deciding duplicates against an empty or
   transient folder is how the same folder ends up in two tabs;
 - if its folder is already shown in a tracked tab on the same desktop, the duplicate is closed
-  and the existing tab (and its window) is selected **and refreshed**;
+  and the existing tab (and its window) is selected **and refreshed**; the just-created
+  duplicate is closed only while it is verifiably the front-most tab — never anything the
+  user may have focused in the meantime;
 - when the folder does not arrive in time, the duplicate check is **retried the moment the
   tab's navigation completes** (within ~10 s), so a slow folder still switches instead of
   duplicating;

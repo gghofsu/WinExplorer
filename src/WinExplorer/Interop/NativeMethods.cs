@@ -183,6 +183,7 @@ internal static class NativeMethods
     internal const int VK_RWIN = 0x5C;
     internal const int VK_F23 = 0x86;
     internal const int VK_ESCAPE = 0x1B;
+    internal const int VK_F5 = 0x74;
 
     internal const uint KEYEVENTF_KEYUP = 0x0002;
     internal const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
